@@ -15,6 +15,54 @@ from datetime import datetime, timezone
 import csv
 import io
 import httpx
+import multiprocessing
+
+
+# Auto-threading configuration
+class ThreadConfig:
+    """Auto-detects and manages optimal concurrency settings"""
+    
+    def __init__(self):
+        self._max_concurrent_identifiers = 5  # Process up to 5 identifiers at once
+        self._max_concurrent_platforms = 20   # Run up to 20 platform checks at once
+        self._cpu_count = multiprocessing.cpu_count()
+    
+    @property
+    def max_concurrent_identifiers(self) -> int:
+        """Auto-adjust based on proxy count"""
+        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
+        if proxy_count > 20:
+            return min(10, self._max_concurrent_identifiers * 2)
+        elif proxy_count > 5:
+            return min(7, self._max_concurrent_identifiers + 2)
+        return self._max_concurrent_identifiers
+    
+    @property
+    def max_concurrent_platforms(self) -> int:
+        """Auto-adjust: with proxies run more in parallel"""
+        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
+        if proxy_count > 10:
+            return 35  # All platforms at once
+        return self._max_concurrent_platforms
+    
+    def set_max_identifiers(self, count: int):
+        self._max_concurrent_identifiers = max(1, min(20, count))
+    
+    def set_max_platforms(self, count: int):
+        self._max_concurrent_platforms = max(5, min(40, count))
+    
+    def get_info(self) -> dict:
+        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
+        return {
+            "max_concurrent_identifiers": self.max_concurrent_identifiers,
+            "max_concurrent_platforms": self.max_concurrent_platforms,
+            "cpu_count": self._cpu_count,
+            "active_proxies": proxy_count,
+            "mode": "auto",
+        }
+
+
+thread_config = ThreadConfig()
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -1078,71 +1126,53 @@ async def check_phone_platform(phone: str, country_code: str, platform_name: str
         return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
 
 
+def _result_to_status(result: Dict[str, Any]) -> str:
+    """Convert a platform check result dict to a status string"""
+    if result.get("error"):
+        return "error"
+    elif result.get("unverifiable"):
+        return "unverifiable"
+    elif result.get("rate_limited"):
+        return "rate_limited"
+    elif result.get("exists"):
+        return "found"
+    else:
+        return "not_found"
+
+
 async def verify_email(email: str) -> VerificationResult:
     platforms_results = []
+    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
     
-    # Use proxy manager to create client
+    async def check_with_semaphore(coro):
+        async with sem:
+            return await coro
+    
     async with proxy_manager.create_client(timeout=30) as client:
-        # Run custom platform checks first (they handle their own unverifiable status)
-        custom_tasks = [check_custom_email_platform(email, name, client) for name in CUSTOM_EMAIL_PLATFORMS.keys()]
-        custom_results = await asyncio.gather(*custom_tasks, return_exceptions=True)
+        # Build ALL tasks at once - custom + holehe
+        all_tasks = []
         
-        for result in custom_results:
+        # Custom platform tasks
+        for name in CUSTOM_EMAIL_PLATFORMS.keys():
+            all_tasks.append(check_with_semaphore(check_custom_email_platform(email, name, client)))
+        
+        # Holehe platform tasks
+        for name in HOLEHE_MODULES.keys():
+            all_tasks.append(check_with_semaphore(check_holehe_platform(email, name, client)))
+        
+        # Run ALL platforms in parallel
+        all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
+        
+        for result in all_results:
             if isinstance(result, Exception):
                 continue
             
-            status = "error"
-            if result.get("error"):
-                status = "error"
-            elif result.get("unverifiable"):
-                status = "unverifiable"
-            elif result.get("rate_limited"):
-                status = "rate_limited"
-            elif result.get("exists"):
-                status = "found"
-            else:
-                status = "not_found"
-            
             platforms_results.append(PlatformResult(
                 platform=result.get("platform", "unknown"),
-                status=status,
+                status=_result_to_status(result),
                 domain=result.get("domain", ""),
                 method=result.get("method", "unknown")
             ))
-        
-        # Run holehe checks with small batches and delays to reduce rate limiting
-        holehe_names = list(HOLEHE_MODULES.keys())
-        batch_size = 5
-        
-        for i in range(0, len(holehe_names), batch_size):
-            batch = holehe_names[i:i + batch_size]
-            batch_tasks = [check_holehe_platform(email, name, client) for name in batch]
-            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
-            
-            for result in batch_results:
-                if isinstance(result, Exception):
-                    continue
-                
-                status = "error"
-                if result.get("error"):
-                    status = "error"
-                elif result.get("rate_limited"):
-                    status = "rate_limited"
-                elif result.get("exists"):
-                    status = "found"
-                else:
-                    status = "not_found"
-                
-                platforms_results.append(PlatformResult(
-                    platform=result.get("platform", "unknown"),
-                    status=status,
-                    domain=result.get("domain", ""),
-                    method=result.get("method", "unknown")
-                ))
-            
-            # Small delay between batches to reduce rate limiting
-            if i + batch_size < len(holehe_names):
-                await asyncio.sleep(0.5)
     
     status_order = {"found": 0, "not_found": 1, "unverifiable": 2, "rate_limited": 3, "error": 4}
     platforms_results.sort(key=lambda x: status_order.get(x.status, 5))
@@ -1157,30 +1187,23 @@ async def verify_email(email: str) -> VerificationResult:
 async def verify_phone(phone: str) -> VerificationResult:
     country_code, national_number, country = parse_phone_number(phone)
     platforms_results = []
+    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
+    
+    async def check_with_semaphore(coro):
+        async with sem:
+            return await coro
     
     async with proxy_manager.create_client(timeout=30) as client:
-        tasks = [check_phone_platform(national_number, country_code, name, client) for name in PHONE_PLATFORMS.keys()]
+        tasks = [check_with_semaphore(check_phone_platform(national_number, country_code, name, client)) for name in PHONE_PLATFORMS.keys()]
         all_results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in all_results:
             if isinstance(result, Exception):
                 continue
             
-            status = "error"
-            if result.get("error"):
-                status = "error"
-            elif result.get("unverifiable"):
-                status = "unverifiable"
-            elif result.get("rate_limited"):
-                status = "rate_limited"
-            elif result.get("exists"):
-                status = "found"
-            else:
-                status = "not_found"
-            
             platforms_results.append(PlatformResult(
                 platform=result.get("platform", "unknown"),
-                status=status,
+                status=_result_to_status(result),
                 domain=result.get("domain", ""),
                 method=result.get("method", "phone")
             ))
@@ -1256,11 +1279,12 @@ def parse_file_content(content: str) -> List[str]:
 async def root():
     return {
         "message": "FAST API - Identity Checker", 
-        "version": "5.0.0", 
+        "version": "6.0.0", 
         "mode": "real_verification",
         "email_platforms": len(ALL_EMAIL_PLATFORMS),
         "phone_platforms": len(ALL_PHONE_PLATFORMS),
-        "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"])
+        "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
+        "auto_threading": thread_config.get_info()
     }
 
 @api_router.get("/health")
@@ -1273,8 +1297,23 @@ async def health_check():
         "proxies_count": len(proxy_manager.proxies),
         "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
         "mode": "real_verification",
-        "custom_platforms_need_proxy": list(CUSTOM_EMAIL_PLATFORMS.keys())
+        "custom_platforms_need_proxy": list(CUSTOM_EMAIL_PLATFORMS.keys()),
+        "threading": thread_config.get_info()
     }
+
+@api_router.get("/config/threads")
+async def get_thread_config():
+    """Get auto-threading configuration"""
+    return thread_config.get_info()
+
+@api_router.post("/config/threads")
+async def set_thread_config(max_identifiers: Optional[int] = None, max_platforms: Optional[int] = None):
+    """Manually override auto-threading settings"""
+    if max_identifiers is not None:
+        thread_config.set_max_identifiers(max_identifiers)
+    if max_platforms is not None:
+        thread_config.set_max_platforms(max_platforms)
+    return thread_config.get_info()
 
 
 # ============ PROXY ROUTES ============
@@ -1379,13 +1418,25 @@ async def verify_identifiers_route(request: VerificationRequest):
     if not request.identifiers:
         raise HTTPException(status_code=400, detail="No identifiers provided")
     
-    identifiers = request.identifiers[:20]
+    identifiers = request.identifiers[:50]  # Raised limit with auto-threading
+    
+    # Auto-thread: process multiple identifiers concurrently
+    sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
+    
+    async def verify_with_semaphore(identifier):
+        async with sem:
+            return await verify_identifier(identifier)
+    
+    tasks = [verify_with_semaphore(ident) for ident in identifiers]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     
     results = []
-    for identifier in identifiers:
-        result = await verify_identifier(identifier)
-        if result:
-            results.append(result)
+    for r in raw_results:
+        if isinstance(r, Exception):
+            logging.error(f"Verification error: {r}")
+            continue
+        if r is not None:
+            results.append(r)
     
     return BulkVerificationResponse(total=len(results), results=results)
 
@@ -1411,13 +1462,25 @@ async def verify_file(file: UploadFile = File(...)):
     if not identifiers:
         raise HTTPException(status_code=400, detail="No valid emails or phone numbers found")
     
-    identifiers = identifiers[:20]
+    identifiers = identifiers[:50]  # Raised limit with auto-threading
+    
+    # Auto-thread: process multiple identifiers concurrently
+    sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
+    
+    async def verify_with_semaphore(identifier):
+        async with sem:
+            return await verify_identifier(identifier)
+    
+    tasks = [verify_with_semaphore(ident) for ident in identifiers]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
     
     results = []
-    for identifier in identifiers:
-        result = await verify_identifier(identifier)
-        if result:
-            results.append(result)
+    for r in raw_results:
+        if isinstance(r, Exception):
+            logging.error(f"Verification error: {r}")
+            continue
+        if r is not None:
+            results.append(r)
     
     return BulkVerificationResponse(total=len(results), results=results)
 

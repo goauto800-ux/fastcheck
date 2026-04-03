@@ -1,7 +1,27 @@
 import { motion } from "framer-motion";
-import { Zap } from "lucide-react";
+import { Zap, Cpu } from "lucide-react";
+import { useState, useEffect } from "react";
+import axios from "axios";
+
+const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 export default function Header() {
+  const [threadInfo, setThreadInfo] = useState(null);
+
+  useEffect(() => {
+    const fetchInfo = async () => {
+      try {
+        const resp = await axios.get(`${BACKEND_URL}/api/config/threads`);
+        setThreadInfo(resp.data);
+      } catch (e) {
+        // ignore
+      }
+    };
+    fetchInfo();
+    const interval = setInterval(fetchInfo, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
   return (
     <motion.header
       initial={{ opacity: 0, y: -20 }}
@@ -24,17 +44,28 @@ export default function Header() {
             </span>
           </div>
 
-          {/* Tagline */}
-          <div className="hidden sm:block">
-            <span className="text-xs font-mono text-slate-500 tracking-wider uppercase">
-              Identity Verification Tool
-            </span>
-          </div>
+          {/* Threading info */}
+          {threadInfo && (
+            <div className="hidden sm:flex items-center gap-4">
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                <Cpu className="w-3.5 h-3.5 text-blue-400" />
+                <span className="text-xs font-mono text-blue-400">
+                  {threadInfo.max_concurrent_identifiers} threads
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20">
+                <Zap className="w-3.5 h-3.5 text-purple-400" />
+                <span className="text-xs font-mono text-purple-400">
+                  {threadInfo.max_concurrent_platforms} checks//{threadInfo.active_proxies > 0 ? ` • ${threadInfo.active_proxies} proxies` : ""}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Status indicator */}
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-xs font-mono text-slate-400">Online</span>
+            <span className="text-xs font-mono text-slate-400">Auto</span>
           </div>
         </div>
       </div>
