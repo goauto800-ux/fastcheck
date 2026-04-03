@@ -1,0 +1,10 @@
+node_modules
+.git
+.emergent
+*.log
+__pycache__
+*.pyc
+.env.local
+tests
+test_result.md
+test_reports
