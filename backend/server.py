@@ -15,7 +15,6 @@ from datetime import datetime, timezone
 import csv
 import io
 import httpx
-from bs4 import BeautifulSoup
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -31,14 +30,14 @@ app = FastAPI(title="FAST - Identity Checker API")
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Import holehe modules
+# Import holehe modules for email
 from holehe.modules.shopping.amazon import amazon
 from holehe.modules.shopping.ebay import ebay
 from holehe.modules.social_media.discord import discord
-from holehe.modules.social_media.instagram import instagram
+from holehe.modules.social_media.instagram import instagram as holehe_instagram
 from holehe.modules.social_media.twitter import twitter
 from holehe.modules.social_media.pinterest import pinterest
-from holehe.modules.social_media.snapchat import snapchat
+from holehe.modules.social_media.snapchat import snapchat as holehe_snapchat
 from holehe.modules.social_media.tumblr import tumblr
 from holehe.modules.music.spotify import spotify
 from holehe.modules.programing.github import github
@@ -63,11 +62,16 @@ from holehe.modules.crowfunding.buymeacoffee import buymeacoffee
 from holehe.modules.products.eventbrite import eventbrite
 from holehe.modules.social_media.strava import strava
 
+# Import ignorant modules for phone
+from ignorant.modules.social_media.snapchat import snapchat as ignorant_snapchat
+from ignorant.modules.social_media.instagram import instagram as ignorant_instagram
+from ignorant.modules.shopping.amazon import amazon as ignorant_amazon
+
 # User agents
 USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
 ]
 
 def get_headers():
@@ -82,7 +86,7 @@ def get_headers():
 # Models
 class PlatformResult(BaseModel):
     platform: str
-    status: str  # "found", "not_found", "rate_limited", "error"
+    status: str
     domain: str = ""
     method: str = "holehe"
     
@@ -101,110 +105,158 @@ class BulkVerificationResponse(BaseModel):
     results: List[VerificationResult]
 
 
+# ============ PHONE NUMBER UTILITIES ============
+
+def parse_phone_number(phone: str) -> tuple:
+    """Parse phone number to extract country code and number"""
+    phone = re.sub(r'[^\d+]', '', phone)
+    
+    # Common country codes
+    country_codes = {
+        '33': 'FR',  # France
+        '1': 'US',   # USA/Canada
+        '44': 'GB',  # UK
+        '49': 'DE',  # Germany
+        '39': 'IT',  # Italy
+        '34': 'ES',  # Spain
+        '32': 'BE',  # Belgium
+        '41': 'CH',  # Switzerland
+        '31': 'NL',  # Netherlands
+        '351': 'PT', # Portugal
+    }
+    
+    if phone.startswith('+'):
+        phone = phone[1:]
+    elif phone.startswith('00'):
+        phone = phone[2:]
+    
+    # Try to find country code
+    for code, country in sorted(country_codes.items(), key=lambda x: -len(x[0])):
+        if phone.startswith(code):
+            national_number = phone[len(code):]
+            return code, national_number, country
+    
+    # Default to France if starts with 0
+    if phone.startswith('0'):
+        return '33', phone[1:], 'FR'
+    
+    return '33', phone, 'FR'
+
+
 # ============ CUSTOM PLATFORM CHECKS ============
 
 async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via forgot password flow"""
+    """Check Netflix via login API"""
     try:
         headers = get_headers()
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json"
         
-        # Netflix forgot password page
-        forgot_url = "https://www.netflix.com/loginhelp"
-        page = await client.get(forgot_url, headers=headers, follow_redirects=True)
-        
-        # Find the form action and submit
-        headers["Content-Type"] = "application/x-www-form-urlencoded"
-        headers["Referer"] = forgot_url
-        
-        data = {
-            "email": email,
-            "action": "loginAction",
-            "mode": "forgotPassword"
+        # Try the Netflix login endpoint which indicates if email exists
+        login_data = {
+            "userLoginId": email,
+            "password": "wrongpassword123",
+            "rememberMe": True,
+            "flow": "websiteSignUp",
+            "mode": "login",
+            "action": "loginAction"
         }
         
         response = await client.post(
-            "https://www.netflix.com/loginhelp",
-            data=data,
+            "https://www.netflix.com/api/shakti/mre/cadmium/login",
+            json=login_data,
             headers=headers,
             follow_redirects=True
         )
         
-        text = response.text.lower()
+        # Alternative: check login page behavior
+        login_page = await client.get(
+            f"https://www.netflix.com/login?email={email}",
+            headers=headers,
+            follow_redirects=True
+        )
         
-        # Check for success indicators
-        if "email was sent" in text or "check your email" in text or "sent you an email" in text:
-            return {"exists": True, "rate_limited": False, "domain": "netflix.com", "method": "forgot_password"}
-        elif "cannot find" in text or "no account" in text or "not recognized" in text:
-            return {"exists": False, "rate_limited": False, "domain": "netflix.com", "method": "forgot_password"}
-        elif "too many" in text or "try again" in text:
-            return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "forgot_password"}
+        text = login_page.text.lower()
         
-        return {"exists": False, "rate_limited": False, "domain": "netflix.com", "method": "forgot_password"}
+        # If password field is immediately shown, email might exist
+        if 'incorrect password' in text or 'wrong password' in text:
+            return {"exists": True, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
+        
+        if response.status_code == 403 or 'captcha' in text:
+            return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "login_check"}
+        
+        return {"exists": False, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
     except Exception as e:
         logging.error(f"Netflix check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "forgot_password"}
+        return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "login_check"}
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber/Uber Eats via password reset"""
+    """Check Uber via login flow"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
+        headers["x-csrf-token"] = "x"
         
-        # Try Uber's password reset API
+        # Uber uses a login lookup endpoint
         data = {"email": email}
         
-        response = await client.post(
+        # First try the direct email lookup
+        try:
+            response = await client.post(
+                "https://auth.uber.com/v2/public/sdk/authenticate",
+                json={
+                    "email": email,
+                    "requestContext": {"deviceId": str(uuid.uuid4())},
+                    "oauthClientId": "uber-web"
+                },
+                headers=headers,
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("nextStep") == "PASSWORD" or "password" in str(result).lower():
+                    return {"exists": True, "rate_limited": False, "domain": "uber.com", "method": "sdk_auth"}
+            elif response.status_code == 429:
+                return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "sdk_auth"}
+        except Exception:
+            pass
+        
+        # Fallback: try forgot password page
+        forgot_page = await client.get(
             "https://auth.uber.com/login/forgot-password",
-            headers=headers,
+            headers=get_headers(),
             follow_redirects=True
         )
         
-        # Get the page and check for CSRF token
-        text = response.text.lower()
-        
-        if response.status_code == 429:
+        if forgot_page.status_code == 429:
             return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "forgot_password"}
         
-        # Try to submit email
-        csrf_match = re.search(r'name="csrf"[^>]*value="([^"]+)"', response.text)
-        if csrf_match:
-            csrf = csrf_match.group(1)
-            form_data = {"email": email, "csrf": csrf}
-            
-            submit_response = await client.post(
-                "https://auth.uber.com/login/forgot-password",
-                data=form_data,
-                headers=headers,
-                follow_redirects=True
-            )
-            
-            submit_text = submit_response.text.lower()
-            
-            if "sent" in submit_text or "check your" in submit_text:
-                return {"exists": True, "rate_limited": False, "domain": "uber.com", "method": "forgot_password"}
-            elif "no account" in submit_text or "not found" in submit_text:
-                return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "forgot_password"}
-        
-        return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "forgot_password"}
+        return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "sdk_auth"}
     except Exception as e:
         logging.error(f"Uber check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "forgot_password"}
+        return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "sdk_auth"}
 
 
 async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via registration validation"""
+    """Check Binance via registration check"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
+        headers["clienttype"] = "web"
         
         # Binance registration check
-        data = {"email": email}
+        data = {
+            "email": email,
+            "type": "register"
+        }
         
         response = await client.post(
-            "https://www.binance.com/bapi/accounts/v1/public/authcenter/email/validate",
+            "https://www.binance.com/bapi/accounts/v1/public/account/email/validate",
             json=data,
-            headers=headers
+            headers=headers,
+            timeout=15
         )
         
         if response.status_code == 429:
@@ -212,12 +264,11 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         
         if response.status_code == 200:
             result = response.json()
-            # If validation returns success=false, email might be taken
-            if result.get("success") == False:
-                # Check error message
-                if "exist" in str(result).lower() or "registered" in str(result).lower():
+            # If success is false and message mentions "registered", account exists
+            if not result.get("success", True):
+                msg = str(result.get("message", "")).lower()
+                if "registered" in msg or "exist" in msg or "already" in msg:
                     return {"exists": True, "rate_limited": False, "domain": "binance.com", "method": "email_validate"}
-            return {"exists": False, "rate_limited": False, "domain": "binance.com", "method": "email_validate"}
         
         return {"exists": False, "rate_limited": False, "domain": "binance.com", "method": "email_validate"}
     except Exception as e:
@@ -226,121 +277,253 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
 
 
 async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via signup flow"""
+    """Check Coinbase via signup"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
         headers["Accept"] = "application/json"
         
-        # Coinbase email check endpoint
-        data = {"email": email}
-        
+        # Try signup email check
         response = await client.post(
-            "https://www.coinbase.com/api/v1/accounts/check_email",
-            json=data,
-            headers=headers
+            "https://www.coinbase.com/api/v2/users",
+            json={"email": email, "password": "TempPass123!@#"},
+            headers=headers,
+            timeout=15
         )
         
         if response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "email_check"}
+            return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "signup_check"}
+        
+        # Check response for "email already taken"
+        try:
+            result = response.json()
+            errors = result.get("errors", [])
+            for error in errors:
+                if "email" in str(error).lower() and ("taken" in str(error).lower() or "exist" in str(error).lower()):
+                    return {"exists": True, "rate_limited": False, "domain": "coinbase.com", "method": "signup_check"}
+        except Exception:
+            pass
+        
+        return {"exists": False, "rate_limited": False, "domain": "coinbase.com", "method": "signup_check"}
+    except Exception as e:
+        logging.error(f"Coinbase check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "signup_check"}
+
+
+async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Deliveroo via login/signup flow"""
+    try:
+        headers = get_headers()
+        headers["Content-Type"] = "application/json"
+        headers["Accept"] = "application/json, text/plain, */*"
+        headers["Origin"] = "https://deliveroo.fr"
+        headers["Referer"] = "https://deliveroo.fr/"
+        
+        # Deliveroo login check endpoint
+        login_data = {
+            "email_address": email,
+            "password": "wrongpassword123"
+        }
+        
+        response = await client.post(
+            "https://api.fr.deliveroo.com/orderapp/v1/login",
+            json=login_data,
+            headers=headers,
+            timeout=15
+        )
+        
+        if response.status_code == 429:
+            return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "login_check"}
+        
+        if response.status_code == 401:
+            # 401 with "invalid password" means account exists
+            try:
+                result = response.json()
+                msg = str(result).lower()
+                if "password" in msg or "credentials" in msg:
+                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
+            except Exception:
+                pass
+        
+        if response.status_code == 404 or response.status_code == 400:
+            # Account doesn't exist
+            return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
+        
+        # Try signup check as fallback
+        signup_data = {"email_address": email}
+        signup_response = await client.post(
+            "https://api.fr.deliveroo.com/orderapp/v1/check-email",
+            json=signup_data,
+            headers=headers,
+            timeout=15
+        )
+        
+        if signup_response.status_code == 200:
+            try:
+                result = signup_response.json()
+                if result.get("registered") or result.get("exists"):
+                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "email_check"}
+            except Exception:
+                pass
+        
+        return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
+    except Exception as e:
+        logging.error(f"Deliveroo check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "login_check"}
+
+
+# ============ PHONE NUMBER CHECKS ============
+
+async def check_snapchat_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Snapchat with phone number using ignorant"""
+    try:
+        out = []
+        await ignorant_snapchat(phone, country_code, client, out)
+        if out and len(out) > 0:
+            result = out[0]
+            return {
+                "exists": result.get("exists", False),
+                "rate_limited": result.get("rateLimit", False),
+                "domain": "snapchat.com",
+                "method": "phone_register"
+            }
+        return {"exists": False, "rate_limited": True, "domain": "snapchat.com", "method": "phone_register"}
+    except Exception as e:
+        logging.error(f"Snapchat phone check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "snapchat.com", "method": "phone_register"}
+
+
+async def check_instagram_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Instagram with phone number using ignorant"""
+    try:
+        out = []
+        await ignorant_instagram(phone, client, out)
+        if out and len(out) > 0:
+            result = out[0]
+            return {
+                "exists": result.get("exists", False),
+                "rate_limited": result.get("rateLimit", False),
+                "domain": "instagram.com",
+                "method": "phone_lookup"
+            }
+        return {"exists": False, "rate_limited": True, "domain": "instagram.com", "method": "phone_lookup"}
+    except Exception as e:
+        logging.error(f"Instagram phone check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "instagram.com", "method": "phone_lookup"}
+
+
+async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Amazon with phone number using ignorant"""
+    try:
+        out = []
+        await ignorant_amazon(phone, client, out)
+        if out and len(out) > 0:
+            result = out[0]
+            return {
+                "exists": result.get("exists", False),
+                "rate_limited": result.get("rateLimit", False),
+                "domain": "amazon.com",
+                "method": "phone_lookup"
+            }
+        return {"exists": False, "rate_limited": True, "domain": "amazon.com", "method": "phone_lookup"}
+    except Exception as e:
+        logging.error(f"Amazon phone check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "amazon.com", "method": "phone_lookup"}
+
+
+async def check_uber_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Uber with phone number"""
+    try:
+        headers = get_headers()
+        headers["Content-Type"] = "application/json"
+        
+        # Format phone with +
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        
+        response = await client.post(
+            "https://auth.uber.com/v2/public/sdk/authenticate",
+            json={
+                "phoneNumber": phone,
+                "requestContext": {"deviceId": str(uuid.uuid4())},
+                "oauthClientId": "uber-web"
+            },
+            headers=headers,
+            timeout=15
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            if result.get("nextStep") == "OTP" or "otp" in str(result).lower():
+                return {"exists": True, "rate_limited": False, "domain": "uber.com", "method": "phone_auth"}
+        elif response.status_code == 429:
+            return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "phone_auth"}
+        
+        return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "phone_auth"}
+    except Exception as e:
+        logging.error(f"Uber phone check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "phone_auth"}
+
+
+async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Deliveroo with phone number"""
+    try:
+        headers = get_headers()
+        headers["Content-Type"] = "application/json"
+        
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        
+        response = await client.post(
+            "https://api.fr.deliveroo.com/orderapp/v1/check-phone",
+            json={"phone_number": phone},
+            headers=headers,
+            timeout=15
+        )
         
         if response.status_code == 200:
             try:
                 result = response.json()
-                if result.get("taken") or result.get("exists") or result.get("registered"):
-                    return {"exists": True, "rate_limited": False, "domain": "coinbase.com", "method": "email_check"}
+                if result.get("registered") or result.get("exists"):
+                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "phone_check"}
             except Exception:
                 pass
+        elif response.status_code == 429:
+            return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "phone_check"}
         
-        # Alternative: try forgot password
-        forgot_response = await client.get(
-            f"https://www.coinbase.com/password_resets/new?email={email}",
-            headers=headers,
-            follow_redirects=True
-        )
-        
-        forgot_text = forgot_response.text.lower()
-        if "sent" in forgot_text or "check your email" in forgot_text:
-            return {"exists": True, "rate_limited": False, "domain": "coinbase.com", "method": "forgot_password"}
-        
-        return {"exists": False, "rate_limited": False, "domain": "coinbase.com", "method": "email_check"}
+        return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "phone_check"}
     except Exception as e:
-        logging.error(f"Coinbase check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "email_check"}
-
-
-async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo via password reset"""
-    try:
-        headers = get_headers()
-        headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
-        
-        # Deliveroo password reset
-        data = {"email_address": email}
-        
-        response = await client.post(
-            "https://api.deliveroo.com/orderapp/v1/password-reset",
-            json=data,
-            headers=headers
-        )
-        
-        if response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "password_reset"}
-        
-        if response.status_code == 200 or response.status_code == 201:
-            return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "password_reset"}
-        elif response.status_code == 404:
-            return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "password_reset"}
-        
-        return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "password_reset"}
-    except Exception as e:
-        logging.error(f"Deliveroo check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "password_reset"}
+        logging.error(f"Deliveroo phone check error: {e}")
+        return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "phone_check"}
 
 
 # ============ HOLEHE MODULE CONFIGS ============
 
 HOLEHE_MODULES = {
-    # Shopping & Food
     "amazon": {"func": amazon, "category": "Shopping"},
     "ebay": {"func": ebay, "category": "Shopping"},
-    
-    # Social Media
     "discord": {"func": discord, "category": "Social"},
-    "instagram": {"func": instagram, "category": "Social"},
+    "instagram": {"func": holehe_instagram, "category": "Social"},
     "twitter": {"func": twitter, "category": "Social"},
     "pinterest": {"func": pinterest, "category": "Social"},
-    "snapchat": {"func": snapchat, "category": "Social"},
+    "snapchat": {"func": holehe_snapchat, "category": "Social"},
     "tumblr": {"func": tumblr, "category": "Social"},
     "imgur": {"func": imgur, "category": "Social"},
     "patreon": {"func": patreon, "category": "Social"},
     "strava": {"func": strava, "category": "Social"},
-    
-    # Music & Streaming
     "spotify": {"func": spotify, "category": "Streaming"},
     "soundcloud": {"func": soundcloud, "category": "Music"},
-    
-    # Tech & Dev
     "github": {"func": github, "category": "Dev"},
     "docker": {"func": docker_check, "category": "Dev"},
     "codecademy": {"func": codecademy, "category": "Learning"},
-    
-    # Email providers
     "google": {"func": google, "category": "Email"},
     "yahoo": {"func": yahoo, "category": "Email"},
     "protonmail": {"func": protonmail, "category": "Email"},
-    
-    # Software
     "adobe": {"func": adobe, "category": "Software"},
     "office365": {"func": office365, "category": "Software"},
     "lastpass": {"func": lastpass, "category": "Software"},
     "firefox": {"func": firefox, "category": "Software"},
-    
-    # Payment
     "venmo": {"func": venmo, "category": "Payment"},
-    
-    # Other
     "nike": {"func": nike, "category": "Shopping"},
     "quora": {"func": quora, "category": "Social"},
     "wordpress": {"func": wordpress, "category": "CMS"},
@@ -349,8 +532,8 @@ HOLEHE_MODULES = {
     "eventbrite": {"func": eventbrite, "category": "Events"},
 }
 
-# Custom platform checks (not in holehe)
-CUSTOM_PLATFORMS = {
+# Custom email checks
+CUSTOM_EMAIL_PLATFORMS = {
     "netflix": {"func": check_netflix_custom, "category": "Streaming"},
     "uber_eats": {"func": check_uber_custom, "category": "Food"},
     "binance": {"func": check_binance_custom, "category": "Crypto"},
@@ -358,12 +541,21 @@ CUSTOM_PLATFORMS = {
     "deliveroo": {"func": check_deliveroo_custom, "category": "Food"},
 }
 
-# All platforms
-ALL_PLATFORMS = list(HOLEHE_MODULES.keys()) + list(CUSTOM_PLATFORMS.keys())
+# Phone number checks
+PHONE_PLATFORMS = {
+    "snapchat": {"func": check_snapchat_phone, "category": "Social", "needs_country_code": True},
+    "instagram": {"func": check_instagram_phone, "category": "Social", "needs_country_code": False},
+    "amazon": {"func": check_amazon_phone, "category": "Shopping", "needs_country_code": False},
+    "uber_eats": {"func": check_uber_phone, "category": "Food", "needs_country_code": False},
+    "deliveroo": {"func": check_deliveroo_phone, "category": "Food", "needs_country_code": False},
+}
+
+ALL_EMAIL_PLATFORMS = list(HOLEHE_MODULES.keys()) + list(CUSTOM_EMAIL_PLATFORMS.keys())
+ALL_PHONE_PLATFORMS = list(PHONE_PLATFORMS.keys())
 
 
 async def check_holehe_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check if email exists on a platform using holehe"""
+    """Check email on holehe platform"""
     try:
         module_info = HOLEHE_MODULES.get(platform_name)
         if not module_info:
@@ -388,10 +580,10 @@ async def check_holehe_platform(email: str, platform_name: str, client: httpx.As
         return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
 
 
-async def check_custom_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check custom platform"""
+async def check_custom_email_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check email on custom platform"""
     try:
-        platform_info = CUSTOM_PLATFORMS.get(platform_name)
+        platform_info = CUSTOM_EMAIL_PLATFORMS.get(platform_name)
         if not platform_info:
             return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
         
@@ -404,83 +596,127 @@ async def check_custom_platform(email: str, platform_name: str, client: httpx.As
         return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
 
 
+async def check_phone_platform(phone: str, country_code: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check phone on platform"""
+    try:
+        platform_info = PHONE_PLATFORMS.get(platform_name)
+        if not platform_info:
+            return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
+        
+        if platform_info.get("needs_country_code"):
+            result = await platform_info["func"](phone, country_code, client)
+        else:
+            full_phone = country_code + phone
+            result = await platform_info["func"](full_phone, client)
+        
+        result["platform"] = platform_name
+        result["error"] = False
+        return result
+    except Exception as e:
+        logging.error(f"Error checking phone {platform_name}: {e}")
+        return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
+
+
+async def verify_email(email: str) -> VerificationResult:
+    """Verify email across all platforms"""
+    platforms_results = []
+    
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        # Custom platforms first (priority)
+        custom_tasks = [check_custom_email_platform(email, name, client) for name in CUSTOM_EMAIL_PLATFORMS.keys()]
+        # Holehe platforms
+        holehe_tasks = [check_holehe_platform(email, name, client) for name in HOLEHE_MODULES.keys()]
+        
+        all_results = await asyncio.gather(*(custom_tasks + holehe_tasks), return_exceptions=True)
+        
+        for result in all_results:
+            if isinstance(result, Exception):
+                continue
+            
+            status = "error"
+            if result.get("error"):
+                status = "error"
+            elif result.get("rate_limited"):
+                status = "rate_limited"
+            elif result.get("exists"):
+                status = "found"
+            else:
+                status = "not_found"
+            
+            platforms_results.append(PlatformResult(
+                platform=result.get("platform", "unknown"),
+                status=status,
+                domain=result.get("domain", ""),
+                method=result.get("method", "unknown")
+            ))
+    
+    # Sort: found first
+    status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
+    platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
+    
+    return VerificationResult(
+        identifier=email,
+        identifier_type="email",
+        platforms=platforms_results
+    )
+
+
+async def verify_phone(phone: str) -> VerificationResult:
+    """Verify phone number across supported platforms"""
+    country_code, national_number, country = parse_phone_number(phone)
+    
+    platforms_results = []
+    
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+        tasks = [check_phone_platform(national_number, country_code, name, client) for name in PHONE_PLATFORMS.keys()]
+        all_results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        for result in all_results:
+            if isinstance(result, Exception):
+                continue
+            
+            status = "error"
+            if result.get("error"):
+                status = "error"
+            elif result.get("rate_limited"):
+                status = "rate_limited"
+            elif result.get("exists"):
+                status = "found"
+            else:
+                status = "not_found"
+            
+            platforms_results.append(PlatformResult(
+                platform=result.get("platform", "unknown"),
+                status=status,
+                domain=result.get("domain", ""),
+                method=result.get("method", "phone")
+            ))
+    
+    # Sort: found first
+    status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
+    platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
+    
+    return VerificationResult(
+        identifier=phone,
+        identifier_type="phone",
+        platforms=platforms_results
+    )
+
+
 async def verify_identifier(identifier: str) -> Optional[VerificationResult]:
-    """Verify a single identifier across all platforms"""
+    """Verify identifier (email or phone)"""
     identifier = identifier.strip()
     if not identifier:
         return None
     
     identifier_type = detect_identifier_type(identifier)
-    if identifier_type != "email":
-        return VerificationResult(
-            identifier=identifier,
-            identifier_type=identifier_type,
-            platforms=[PlatformResult(
-                platform="all",
-                status="not_supported",
-                domain="",
-                method="email_only"
-            )]
-        )
     
-    platforms_results = []
-    
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        # Check custom platforms first (priority)
-        custom_tasks = []
-        custom_names = []
-        for name in CUSTOM_PLATFORMS.keys():
-            custom_tasks.append(check_custom_platform(identifier, name, client))
-            custom_names.append(name)
-        
-        # Check holehe platforms
-        holehe_tasks = []
-        holehe_names = []
-        for name in HOLEHE_MODULES.keys():
-            holehe_tasks.append(check_holehe_platform(identifier, name, client))
-            holehe_names.append(name)
-        
-        # Execute all
-        all_tasks = custom_tasks + holehe_tasks
-        all_names = custom_names + holehe_names
-        
-        results = await asyncio.gather(*all_tasks, return_exceptions=True)
-        
-        for name, result in zip(all_names, results):
-            if isinstance(result, Exception):
-                platforms_results.append(PlatformResult(
-                    platform=name,
-                    status="error",
-                    domain="",
-                    method="exception"
-                ))
-            else:
-                status = "error"
-                if result.get("error"):
-                    status = "error"
-                elif result.get("rate_limited"):
-                    status = "rate_limited"
-                elif result.get("exists"):
-                    status = "found"
-                else:
-                    status = "not_found"
-                
-                platforms_results.append(PlatformResult(
-                    platform=name,
-                    status=status,
-                    domain=result.get("domain", ""),
-                    method=result.get("method", "unknown")
-                ))
-    
-    # Sort: found first, not_found, rate_limited, error
-    status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
-    platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
-    
-    return VerificationResult(
-        identifier=identifier,
-        identifier_type=identifier_type,
-        platforms=platforms_results
-    )
+    if identifier_type == "email":
+        return await verify_email(identifier)
+    elif identifier_type == "phone":
+        return await verify_phone(identifier)
+    else:
+        return None
 
 
 def detect_identifier_type(identifier: str) -> str:
@@ -488,8 +724,9 @@ def detect_identifier_type(identifier: str) -> str:
     identifier = identifier.strip()
     if "@" in identifier and "." in identifier:
         return "email"
+    # Check for phone number
     digits = sum(c.isdigit() for c in identifier)
-    if digits >= 8:
+    if digits >= 8 and digits <= 15:
         return "phone"
     return "unknown"
 
@@ -531,44 +768,58 @@ def parse_file_content(content: str) -> List[str]:
 async def root():
     return {
         "message": "FAST API - Identity Checker", 
-        "version": "3.0.0", 
-        "mode": "holehe_real",
-        "platforms_count": len(ALL_PLATFORMS)
+        "version": "4.0.0", 
+        "mode": "real_verification",
+        "email_platforms": len(ALL_EMAIL_PLATFORMS),
+        "phone_platforms": len(ALL_PHONE_PLATFORMS)
     }
 
 @api_router.get("/health")
 async def health_check():
     return {
         "status": "healthy", 
-        "platforms": ALL_PLATFORMS, 
-        "platforms_count": len(ALL_PLATFORMS),
-        "custom_platforms": list(CUSTOM_PLATFORMS.keys()),
-        "mode": "holehe_real_verification"
+        "email_platforms": ALL_EMAIL_PLATFORMS,
+        "phone_platforms": ALL_PHONE_PLATFORMS,
+        "total_platforms": len(ALL_EMAIL_PLATFORMS) + len(ALL_PHONE_PLATFORMS),
+        "mode": "real_verification"
     }
 
 @api_router.get("/platforms")
 async def list_platforms():
     """List all available platforms"""
-    platforms_info = []
+    platforms_info = {
+        "email": [],
+        "phone": []
+    }
     
-    for name in CUSTOM_PLATFORMS.keys():
-        platforms_info.append({
+    for name in CUSTOM_EMAIL_PLATFORMS.keys():
+        platforms_info["email"].append({
             "name": name,
-            "category": CUSTOM_PLATFORMS[name]["category"],
+            "category": CUSTOM_EMAIL_PLATFORMS[name]["category"],
             "type": "custom"
         })
     
     for name in HOLEHE_MODULES.keys():
-        platforms_info.append({
+        platforms_info["email"].append({
             "name": name,
             "category": HOLEHE_MODULES[name]["category"],
             "type": "holehe"
         })
     
-    return {"platforms": platforms_info, "total": len(platforms_info)}
+    for name in PHONE_PLATFORMS.keys():
+        platforms_info["phone"].append({
+            "name": name,
+            "category": PHONE_PLATFORMS[name]["category"]
+        })
+    
+    return {
+        "platforms": platforms_info, 
+        "email_total": len(platforms_info["email"]),
+        "phone_total": len(platforms_info["phone"])
+    }
 
 @api_router.post("/verify", response_model=BulkVerificationResponse)
-async def verify_identifiers(request: VerificationRequest):
+async def verify_identifiers_route(request: VerificationRequest):
     """Verify multiple identifiers"""
     if not request.identifiers:
         raise HTTPException(status_code=400, detail="No identifiers provided")
@@ -604,7 +855,7 @@ async def verify_file(file: UploadFile = File(...)):
     identifiers = parse_file_content(content_str)
     
     if not identifiers:
-        raise HTTPException(status_code=400, detail="No valid emails found in file")
+        raise HTTPException(status_code=400, detail="No valid emails or phone numbers found")
     
     identifiers = identifiers[:20]
     
@@ -615,18 +866,6 @@ async def verify_file(file: UploadFile = File(...)):
             results.append(result)
     
     return BulkVerificationResponse(total=len(results), results=results)
-
-@api_router.post("/verify/single")
-async def verify_single(identifier: str):
-    """Verify a single identifier"""
-    if not identifier or not identifier.strip():
-        raise HTTPException(status_code=400, detail="No identifier provided")
-    
-    result = await verify_identifier(identifier.strip())
-    if not result:
-        raise HTTPException(status_code=400, detail="Invalid identifier")
-    
-    return result
 
 
 # Include router

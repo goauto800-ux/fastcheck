@@ -218,7 +218,7 @@ export default function ResultsGrid({ results, isLoading }) {
           <Search className="w-10 h-10 text-slate-600" />
         </div>
         <p className="text-slate-500 font-mono text-sm">
-          Aucun résultat. Entrez des emails pour vérifier sur 30+ plateformes.
+          Aucun résultat. Entrez des emails ou numéros pour vérifier sur 35+ plateformes.
         </p>
       </motion.div>
     );

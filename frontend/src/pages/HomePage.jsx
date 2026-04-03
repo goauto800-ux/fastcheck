@@ -175,8 +175,8 @@ export default function HomePage() {
               <span className="text-white">Rapide</span>
             </h1>
             <p className="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto font-mono">
-              Vérifiez si des emails sont associés à des comptes sur
-              Netflix, Uber Eats, Binance, Coinbase, Amazon, Spotify et 30+ autres plateformes
+              Vérifiez emails et numéros de téléphone sur
+              Netflix, Uber Eats, Binance, Coinbase, Deliveroo, Snapchat et 30+ plateformes
             </p>
           </motion.div>
 
