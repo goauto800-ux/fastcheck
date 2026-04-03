@@ -7,9 +7,15 @@ import {
 
 // Simple platform config with colors only - using Lucide icons as fallbacks
 const PLATFORM_CONFIG = {
+  // Priority platforms (custom)
+  netflix: { name: "Netflix", color: "#E50914", category: "streaming" },
+  uber_eats: { name: "Uber Eats", color: "#06C167", category: "food" },
+  binance: { name: "Binance", color: "#F0B90B", category: "crypto" },
+  coinbase: { name: "Coinbase", color: "#0052FF", category: "crypto" },
+  deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food" },
+  
   // Shopping & Food
   amazon: { name: "Amazon", color: "#FF9900", category: "shopping" },
-  deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food" },
   ebay: { name: "eBay", color: "#E53238", category: "shopping" },
   nike: { name: "Nike", color: "#FFFFFF", category: "shopping" },
   
@@ -62,6 +68,7 @@ function getCategoryIcon(category) {
     case "food": return ShoppingCart;
     case "social": return MessageCircle;
     case "music": return Music;
+    case "streaming": return Music;
     case "dev": return Code;
     case "email": return Mail;
     case "software": return Briefcase;
@@ -69,6 +76,8 @@ function getCategoryIcon(category) {
     case "crowdfunding": return Coffee;
     case "events": return Calendar;
     case "sport": return Dumbbell;
+    case "crypto": return Globe;
+    case "payment": return Globe;
     default: return Globe;
   }
 }
