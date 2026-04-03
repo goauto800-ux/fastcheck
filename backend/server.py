@@ -1390,6 +1390,58 @@ async def verify_identifiers_route(request: VerificationRequest):
     
     return BulkVerificationResponse(total=len(results), results=results)
 
+@api_router.post("/parse-file")
+async def parse_file(file: UploadFile = File(...)):
+    """Parse a file and return detected identifiers categorized by type (email/phone)"""
+    allowed_types = ['.csv', '.txt', '.text']
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ''
+    
+    if file_ext not in allowed_types and file.content_type not in ['text/csv', 'text/plain']:
+        raise HTTPException(status_code=400, detail="Type de fichier invalide. Formats acceptés : CSV, TXT")
+    
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            content_str = content.decode('latin-1')
+        except Exception:
+            raise HTTPException(status_code=400, detail="Impossible de décoder le contenu du fichier")
+    
+    identifiers = parse_file_content(content_str)
+    
+    if not identifiers:
+        raise HTTPException(status_code=400, detail="Aucun email ou numéro de téléphone valide trouvé")
+    
+    # Categorize identifiers
+    emails = []
+    phones = []
+    unknown = []
+    
+    for ident in identifiers:
+        id_type = detect_identifier_type(ident)
+        if id_type == "email":
+            emails.append(ident)
+        elif id_type == "phone":
+            phones.append(ident)
+        else:
+            unknown.append(ident)
+    
+    return {
+        "filename": file.filename,
+        "total": len(identifiers),
+        "emails": emails,
+        "phones": phones,
+        "unknown": unknown,
+        "email_count": len(emails),
+        "phone_count": len(phones),
+        "preview": {
+            "emails": emails[:10],
+            "phones": phones[:10],
+        }
+    }
+
+
 @api_router.post("/verify/file", response_model=BulkVerificationResponse)
 async def verify_file(file: UploadFile = File(...)):
     allowed_types = ['.csv', '.txt', '.text']

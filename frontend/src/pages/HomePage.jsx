@@ -9,6 +9,7 @@ import ResultsGrid from "../components/ResultsGrid";
 import StatsBar from "../components/StatsBar";
 import ProxyManager from "../components/ProxyManager";
 import PlatformSelector from "../components/PlatformSelector";
+import FilePreviewModal from "../components/FilePreviewModal";
 import { Button } from "../components/ui/button";
 import { Download, Zap, Trash2, ShieldAlert } from "lucide-react";
 
@@ -22,6 +23,8 @@ export default function HomePage() {
   const [totalToVerify, setTotalToVerify] = useState(0);
   const [proxyCount, setProxyCount] = useState(0);
   const [selectedPlatforms, setSelectedPlatforms] = useState([]);
+  const [filePreviewData, setFilePreviewData] = useState(null);
+  const [isParsing, setIsParsing] = useState(false);
 
   // Check proxy status on mount
   useEffect(() => {
@@ -83,34 +86,42 @@ export default function HomePage() {
     const formData = new FormData();
     formData.append("file", file);
 
-    setIsVerifying(true);
-    setProgress(0);
-    setResults([]);
+    setIsParsing(true);
 
     try {
-      const response = await axios.post(`${API}/verify/file`, formData, {
+      // Step 1: Parse file to detect emails/phones
+      const response = await axios.post(`${API}/parse-file`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 
-      setTotalToVerify(response.data.total);
-      const allResults = response.data.results;
-
-      // Simulate streaming effect
-      for (let i = 0; i < allResults.length; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        setResults((prev) => [...prev, allResults[i]]);
-        setProgress(((i + 1) / allResults.length) * 100);
-      }
-
-      toast.success(`${allResults.length} vérification(s) terminée(s)`);
+      // Step 2: Show preview modal with detected data
+      setFilePreviewData(response.data);
     } catch (error) {
-      console.error("File upload error:", error);
-      const message = error.response?.data?.detail || "Erreur lors du traitement du fichier";
+      console.error("File parse error:", error);
+      const message = error.response?.data?.detail || "Erreur lors de l'analyse du fichier";
       toast.error(message);
     } finally {
-      setIsVerifying(false);
-      setProgress(100);
+      setIsParsing(false);
     }
+  }, []);
+
+  const handleFilePreviewConfirm = useCallback(async (identifiers, type) => {
+    setFilePreviewData(null);
+
+    if (!identifiers || identifiers.length === 0) {
+      toast.error("Aucun identifiant sélectionné");
+      return;
+    }
+
+    const typeLabel = type === "email" ? "emails" : type === "phone" ? "numéros" : "identifiants";
+    toast.info(`Vérification de ${identifiers.length} ${typeLabel}...`);
+
+    // Use the existing handleVerify
+    handleVerify(identifiers);
+  }, [handleVerify]);
+
+  const handleFilePreviewCancel = useCallback(() => {
+    setFilePreviewData(null);
   }, []);
 
   const handleExport = useCallback(() => {
@@ -255,7 +266,7 @@ export default function HomePage() {
               animate={{ opacity: 1, x: 0 }}
               transition={{ delay: 0.1 }}
             >
-              <UploadZone onFileUpload={handleFileUpload} disabled={isVerifying} />
+              <UploadZone onFileUpload={handleFileUpload} disabled={isVerifying || isParsing} />
             </motion.div>
 
             <motion.div
@@ -335,6 +346,16 @@ export default function HomePage() {
           <ResultsGrid results={results} isLoading={isVerifying} />
         </main>
       </div>
+
+      {/* File Preview Modal */}
+      {filePreviewData && (
+        <FilePreviewModal
+          data={filePreviewData}
+          onConfirm={handleFilePreviewConfirm}
+          onCancel={handleFilePreviewCancel}
+          disabled={isVerifying}
+        />
+      )}
     </div>
   );
 }

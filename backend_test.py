@@ -258,6 +258,131 @@ admin@test.com,+33698765432"""
         self.log_test("Error Handling", success, f"Passed {tests_passed}/{total_tests} error handling tests")
         return success
 
+    def test_parse_file_endpoint(self) -> bool:
+        """Test /api/parse-file endpoint with various file types and content"""
+        all_tests_passed = True
+        
+        # Test 1: Mixed emails and phone numbers
+        mixed_content = """test@example.com
+user@gmail.com
++33612345678
+0612345679
+another@test.fr
++44771234567"""
+        
+        try:
+            files = {'file': ('mixed_data.txt', mixed_content, 'text/plain')}
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["filename", "total", "emails", "phones", "email_count", "phone_count", "preview"]
+                
+                if all(field in data for field in required_fields):
+                    if data["email_count"] > 0 and data["phone_count"] > 0:
+                        self.log_test("Parse File - Mixed Content", True, 
+                                    f"Found {data['email_count']} emails, {data['phone_count']} phones")
+                    else:
+                        self.log_test("Parse File - Mixed Content", False, 
+                                    f"Expected both emails and phones, got emails: {data['email_count']}, phones: {data['phone_count']}")
+                        all_tests_passed = False
+                else:
+                    self.log_test("Parse File - Mixed Content", False, f"Missing required fields: {data}")
+                    all_tests_passed = False
+            else:
+                self.log_test("Parse File - Mixed Content", False, f"HTTP {response.status_code}: {response.text}")
+                all_tests_passed = False
+        except Exception as e:
+            self.log_test("Parse File - Mixed Content", False, f"Request failed: {str(e)}")
+            all_tests_passed = False
+        
+        # Test 2: CSV with only emails
+        csv_emails_only = """email,name
+user1@example.com,John
+user2@gmail.com,Jane
+admin@company.fr,Admin"""
+        
+        try:
+            files = {'file': ('emails_only.csv', csv_emails_only, 'text/csv')}
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data["email_count"] > 0 and data["phone_count"] == 0:
+                    self.log_test("Parse File - Emails Only", True, 
+                                f"Found {data['email_count']} emails, {data['phone_count']} phones")
+                else:
+                    self.log_test("Parse File - Emails Only", False, 
+                                f"Expected only emails, got emails: {data['email_count']}, phones: {data['phone_count']}")
+                    all_tests_passed = False
+            else:
+                self.log_test("Parse File - Emails Only", False, f"HTTP {response.status_code}: {response.text}")
+                all_tests_passed = False
+        except Exception as e:
+            self.log_test("Parse File - Emails Only", False, f"Request failed: {str(e)}")
+            all_tests_passed = False
+        
+        # Test 3: Text file with only phone numbers
+        phones_only = """+33612345678
++44771234567
+0687654321
++1234567890"""
+        
+        try:
+            files = {'file': ('phones_only.txt', phones_only, 'text/plain')}
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data["phone_count"] > 0 and data["email_count"] == 0:
+                    self.log_test("Parse File - Phones Only", True, 
+                                f"Found {data['email_count']} emails, {data['phone_count']} phones")
+                else:
+                    self.log_test("Parse File - Phones Only", False, 
+                                f"Expected only phones, got emails: {data['email_count']}, phones: {data['phone_count']}")
+                    all_tests_passed = False
+            else:
+                self.log_test("Parse File - Phones Only", False, f"HTTP {response.status_code}: {response.text}")
+                all_tests_passed = False
+        except Exception as e:
+            self.log_test("Parse File - Phones Only", False, f"Request failed: {str(e)}")
+            all_tests_passed = False
+        
+        # Test 4: Empty file
+        try:
+            files = {'file': ('empty.txt', '', 'text/plain')}
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            
+            if response.status_code == 400:
+                self.log_test("Parse File - Empty File", True, "Empty file correctly rejected with 400")
+            else:
+                self.log_test("Parse File - Empty File", False, f"Expected 400 for empty file, got {response.status_code}")
+                all_tests_passed = False
+        except Exception as e:
+            self.log_test("Parse File - Empty File", False, f"Request failed: {str(e)}")
+            all_tests_passed = False
+        
+        # Test 5: File with invalid content (no emails/phones)
+        invalid_content = """This is just some random text
+with no emails or phone numbers
+just words and sentences
+nothing useful for parsing"""
+        
+        try:
+            files = {'file': ('invalid.txt', invalid_content, 'text/plain')}
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            
+            if response.status_code == 400:
+                self.log_test("Parse File - Invalid Content", True, "Invalid content correctly rejected with 400")
+            else:
+                self.log_test("Parse File - Invalid Content", False, f"Expected 400 for invalid content, got {response.status_code}")
+                all_tests_passed = False
+        except Exception as e:
+            self.log_test("Parse File - Invalid Content", False, f"Request failed: {str(e)}")
+            all_tests_passed = False
+        
+        return all_tests_passed
+
     def test_cors_headers(self) -> bool:
         """Test CORS headers are present"""
         try:
@@ -292,6 +417,7 @@ admin@test.com,+33698765432"""
         self.test_health_endpoint()
         self.test_verify_endpoint()
         self.test_verify_file_endpoint()
+        self.test_parse_file_endpoint()  # New parse-file endpoint test
         self.test_verify_single_endpoint()
         self.test_error_handling()
         self.test_cors_headers()

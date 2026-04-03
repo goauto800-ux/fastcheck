@@ -178,20 +178,35 @@ frontend:
         - agent: "main"
         - comment: "CSV export now includes all platforms and shows 'Non vérifiable (proxy requis)' status"
 
+  - task: "File import auto-detection of emails/phones with preview modal"
+    implemented: true
+    working: true
+    file: "backend/server.py, frontend/src/components/FilePreviewModal.jsx, frontend/src/pages/HomePage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Added POST /api/parse-file endpoint that parses uploaded file and returns categorized identifiers (emails vs phones) with counts and previews. Created FilePreviewModal component showing detection results with options to verify emails only, phones only, or all. Modified HomePage to use 2-step flow: parse first, show modal, then verify on user choice."
+        - working: true
+        - agent: "testing"
+        - comment: "TESTED: POST /api/parse-file endpoint working perfectly. All 5 test cases passed: (1) Mixed emails/phones - detected 3 emails, 3 phones ✅ (2) CSV emails only - detected 3 emails, 0 phones ✅ (3) Text phones only - detected 0 emails, 4 phones ✅ (4) Empty file - correctly rejected with 400 ✅ (5) Invalid content - correctly rejected with 400 ✅. Endpoint correctly categorizes identifiers, returns proper counts, preview data, and handles error cases as expected."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 1
+  test_sequence: 2
   run_ui: false
 
 test_plan:
-  current_focus:
-    - "Fix custom platform checks returning false 'not_found' results"
-    - "Updated API response to include 'unverifiable' status"
+  current_focus: []
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-    - message: "Fixed the core issue: 5 custom platform checks (Uber Eats, Netflix, Binance, Coinbase, Deliveroo) now return 'unverifiable' status instead of false 'not_found' when checks cannot be performed (blocked, CAPTCHA, endpoint removed, no proxy). The backend POST /api/verify now includes 'unverifiable' as a valid status. Test that: 1) Without proxies, these 5 platforms return 'unverifiable' status. 2) The verify endpoint still works for holehe-based platforms. 3) The health endpoint returns custom_platforms_need_proxy list."
+    - message: "Added new feature: file import auto-detection. Backend: POST /api/parse-file accepts file upload and returns {filename, total, emails[], phones[], email_count, phone_count, preview{emails[], phones[]}}. Frontend: FilePreviewModal shows detection results with 3 action buttons (verify emails only, phones only, or all). Test the parse-file endpoint with a file containing mixed emails and phone numbers."
+    - agent: "testing"
+    - message: "COMPLETED: Comprehensive testing of POST /api/parse-file endpoint. All test cases passed successfully: mixed content detection, emails-only files, phones-only files, empty file rejection, and invalid content rejection. The endpoint correctly categorizes identifiers, provides accurate counts, includes preview data, and handles all error cases properly. Backend API is working as specified. Ready for production use."
