@@ -295,6 +295,16 @@ export default function ProxyManager() {
                     Un proxy inactif après 3 échecs est automatiquement désactivé.
                   </p>
                 </div>
+
+                {/* Warning for platforms needing proxies */}
+                <div className="p-4 rounded-lg bg-orange-500/5 border border-orange-500/20">
+                  <p className="text-xs text-orange-400/80 font-mono">
+                    ⚠️ <strong>Netflix, Uber Eats, Deliveroo, Binance, Coinbase</strong> nécessitent des 
+                    <strong> proxies résidentiels</strong> pour fonctionner correctement. 
+                    Sans proxies, ces plateformes retourneront souvent "Non trouvé" même si le compte existe.
+                    Les proxies datacenter sont généralement bloqués.
+                  </p>
+                </div>
               </div>
             </motion.div>
           )}

@@ -655,11 +655,13 @@ HOLEHE_MODULES = {
 }
 
 CUSTOM_EMAIL_PLATFORMS = {
-    "netflix": {"func": check_netflix_custom, "category": "Streaming"},
-    "uber_eats": {"func": check_uber_custom, "category": "Food"},
-    "binance": {"func": check_binance_custom, "category": "Crypto"},
-    "coinbase": {"func": check_coinbase_custom, "category": "Crypto"},
-    "deliveroo": {"func": check_deliveroo_custom, "category": "Food"},
+    # Note: Ces plateformes nécessitent des proxies résidentiels pour fonctionner
+    # Sans proxies, elles retourneront "rate_limited" ou "not_found" même si le compte existe
+    "netflix": {"func": check_netflix_custom, "category": "Streaming", "needs_proxy": True},
+    "uber_eats": {"func": check_uber_custom, "category": "Food", "needs_proxy": True},
+    "binance": {"func": check_binance_custom, "category": "Crypto", "needs_proxy": True},
+    "coinbase": {"func": check_coinbase_custom, "category": "Crypto", "needs_proxy": True},
+    "deliveroo": {"func": check_deliveroo_custom, "category": "Food", "needs_proxy": True},
 }
 
 PHONE_PLATFORMS = {
@@ -707,9 +709,18 @@ async def check_custom_email_platform(email: str, platform_name: str, client: ht
         if not platform_info:
             return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
         
+        # Check if platform needs proxy and we don't have one
+        needs_proxy = platform_info.get("needs_proxy", False)
+        has_proxy = len(proxy_manager.proxies) > 0
+        
         result = await platform_info["func"](email, client)
         result["platform"] = platform_name
         result["error"] = False
+        
+        # Add warning if needs proxy but none configured
+        if needs_proxy and not has_proxy:
+            result["needs_proxy_warning"] = True
+        
         return result
     except Exception as e:
         logging.error(f"Error checking custom {platform_name}: {e}")

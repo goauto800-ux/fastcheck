@@ -7,19 +7,19 @@ import {
 
 // Simple platform config with colors only - using Lucide icons as fallbacks
 const PLATFORM_CONFIG = {
-  // Priority platforms (custom)
-  netflix: { name: "Netflix", color: "#E50914", category: "streaming" },
-  uber_eats: { name: "Uber Eats", color: "#06C167", category: "food" },
-  binance: { name: "Binance", color: "#F0B90B", category: "crypto" },
-  coinbase: { name: "Coinbase", color: "#0052FF", category: "crypto" },
-  deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food" },
+  // Priority platforms (custom) - Need residential proxies!
+  netflix: { name: "Netflix", color: "#E50914", category: "streaming", needsProxy: true },
+  uber_eats: { name: "Uber Eats", color: "#06C167", category: "food", needsProxy: true },
+  binance: { name: "Binance", color: "#F0B90B", category: "crypto", needsProxy: true },
+  coinbase: { name: "Coinbase", color: "#0052FF", category: "crypto", needsProxy: true },
+  deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food", needsProxy: true },
   
-  // Shopping & Food
+  // Shopping & Food (holehe - works without proxy)
   amazon: { name: "Amazon", color: "#FF9900", category: "shopping" },
   ebay: { name: "eBay", color: "#E53238", category: "shopping" },
   nike: { name: "Nike", color: "#FFFFFF", category: "shopping" },
   
-  // Social Media
+  // Social Media (holehe - works without proxy)
   discord: { name: "Discord", color: "#5865F2", category: "social" },
   instagram: { name: "Instagram", color: "#E4405F", category: "social" },
   twitter: { name: "Twitter/X", color: "#1DA1F2", category: "social" },
@@ -31,30 +31,30 @@ const PLATFORM_CONFIG = {
   strava: { name: "Strava", color: "#FC4C02", category: "sport" },
   quora: { name: "Quora", color: "#B92B27", category: "social" },
   
-  // Music & Streaming
+  // Music & Streaming (holehe)
   spotify: { name: "Spotify", color: "#1DB954", category: "music" },
   soundcloud: { name: "SoundCloud", color: "#FF5500", category: "music" },
   
-  // Tech & Dev
+  // Tech & Dev (holehe)
   github: { name: "GitHub", color: "#FFFFFF", category: "dev" },
   docker: { name: "Docker", color: "#2496ED", category: "dev" },
   codecademy: { name: "Codecademy", color: "#1F4056", category: "dev" },
   
-  // Email providers
+  // Email providers (holehe)
   google: { name: "Google", color: "#4285F4", category: "email" },
   yahoo: { name: "Yahoo", color: "#6001D2", category: "email" },
   protonmail: { name: "ProtonMail", color: "#8B89CC", category: "email" },
   
-  // Software
+  // Software (holehe)
   adobe: { name: "Adobe", color: "#FF0000", category: "software" },
   office365: { name: "Office 365", color: "#D83B01", category: "software" },
   lastpass: { name: "LastPass", color: "#D32D27", category: "software" },
   firefox: { name: "Firefox", color: "#FF7139", category: "software" },
   
-  // Payment
+  // Payment (holehe)
   venmo: { name: "Venmo", color: "#3D95CE", category: "payment" },
   
-  // Other
+  // Other (holehe)
   wordpress: { name: "WordPress", color: "#21759B", category: "software" },
   blablacar: { name: "BlaBlaCar", color: "#00AAFF", category: "transport" },
   buymeacoffee: { name: "Buy Me Coffee", color: "#FFDD00", category: "crowdfunding" },
@@ -194,6 +194,11 @@ function ResultCard({ result, index }) {
                   <span className="text-sm font-mono text-slate-300">
                     {config?.name || platform.platform}
                   </span>
+                  {config?.needsProxy && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400 font-mono">
+                      PROXY
+                    </span>
+                  )}
                 </div>
                 <StatusBadge status={platform.status} />
               </div>
