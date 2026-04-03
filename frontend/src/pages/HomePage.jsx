@@ -8,6 +8,7 @@ import TextPasteZone from "../components/TextPasteZone";
 import ResultsGrid from "../components/ResultsGrid";
 import StatsBar from "../components/StatsBar";
 import ProxyManager from "../components/ProxyManager";
+import PlatformSelector from "../components/PlatformSelector";
 import { Button } from "../components/ui/button";
 import { Download, Zap, Trash2, ShieldAlert } from "lucide-react";
 
@@ -20,6 +21,7 @@ export default function HomePage() {
   const [progress, setProgress] = useState(0);
   const [totalToVerify, setTotalToVerify] = useState(0);
   const [proxyCount, setProxyCount] = useState(0);
+  const [selectedPlatforms, setSelectedPlatforms] = useState([]);
 
   // Check proxy status on mount
   useEffect(() => {
@@ -46,9 +48,16 @@ export default function HomePage() {
     setResults([]);
 
     try {
-      const response = await axios.post(`${API}/verify`, {
+      const requestData = {
         identifiers: identifiers,
-      });
+      };
+      
+      // Add platform filter if specific platforms selected
+      if (selectedPlatforms.length > 0) {
+        requestData.platforms = selectedPlatforms;
+      }
+      
+      const response = await axios.post(`${API}/verify`, requestData);
 
       // Simulate streaming effect
       const allResults = response.data.results;
@@ -66,7 +75,7 @@ export default function HomePage() {
       setIsVerifying(false);
       setProgress(100);
     }
-  }, []);
+  }, [selectedPlatforms]);
 
   const handleFileUpload = useCallback(async (file) => {
     if (!file) return;
@@ -209,6 +218,13 @@ export default function HomePage() {
 
           {/* Proxy Manager */}
           <ProxyManager onProxyChange={(count) => setProxyCount(count)} />
+
+          {/* Platform Selector */}
+          <PlatformSelector 
+            selectedPlatforms={selectedPlatforms}
+            onSelectionChange={setSelectedPlatforms}
+            disabled={isVerifying}
+          />
 
           {/* Proxy Warning Banner */}
           {proxyCount === 0 && (

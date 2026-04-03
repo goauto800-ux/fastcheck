@@ -350,6 +350,7 @@ class VerificationResult(BaseModel):
 
 class VerificationRequest(BaseModel):
     identifiers: List[str]
+    platforms: Optional[List[str]] = None  # Optional: filter to specific platforms only
 
 class BulkVerificationResponse(BaseModel):
     total: int
@@ -1106,7 +1107,7 @@ def _result_to_status(result: Dict[str, Any]) -> str:
         return "not_found"
 
 
-async def verify_email(email: str) -> VerificationResult:
+async def verify_email(email: str, platforms_filter: Optional[List[str]] = None) -> VerificationResult:
     platforms_results = []
     sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
     
@@ -1120,11 +1121,13 @@ async def verify_email(email: str) -> VerificationResult:
         
         # Custom platform tasks
         for name in CUSTOM_EMAIL_PLATFORMS.keys():
-            all_tasks.append(check_with_semaphore(check_custom_email_platform(email, name, client)))
+            if platforms_filter is None or name in platforms_filter:
+                all_tasks.append(check_with_semaphore(check_custom_email_platform(email, name, client)))
         
         # Holehe platform tasks
         for name in HOLEHE_MODULES.keys():
-            all_tasks.append(check_with_semaphore(check_holehe_platform(email, name, client)))
+            if platforms_filter is None or name in platforms_filter:
+                all_tasks.append(check_with_semaphore(check_holehe_platform(email, name, client)))
         
         # Run ALL platforms in parallel
         all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
@@ -1150,7 +1153,7 @@ async def verify_email(email: str) -> VerificationResult:
     )
 
 
-async def verify_phone(phone: str) -> VerificationResult:
+async def verify_phone(phone: str, platforms_filter: Optional[List[str]] = None) -> VerificationResult:
     country_code, national_number, country = parse_phone_number(phone)
     platforms_results = []
     sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
@@ -1160,7 +1163,11 @@ async def verify_phone(phone: str) -> VerificationResult:
             return await coro
     
     async with proxy_manager.create_client(timeout=30) as client:
-        tasks = [check_with_semaphore(check_phone_platform(national_number, country_code, name, client)) for name in PHONE_PLATFORMS.keys()]
+        tasks = []
+        for name in PHONE_PLATFORMS.keys():
+            if platforms_filter is None or name in platforms_filter:
+                tasks.append(check_with_semaphore(check_phone_platform(national_number, country_code, name, client)))
+        
         all_results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for result in all_results:
@@ -1184,7 +1191,7 @@ async def verify_phone(phone: str) -> VerificationResult:
     )
 
 
-async def verify_identifier(identifier: str) -> Optional[VerificationResult]:
+async def verify_identifier(identifier: str, platforms_filter: Optional[List[str]] = None) -> Optional[VerificationResult]:
     identifier = identifier.strip()
     if not identifier:
         return None
@@ -1192,9 +1199,9 @@ async def verify_identifier(identifier: str) -> Optional[VerificationResult]:
     identifier_type = detect_identifier_type(identifier)
     
     if identifier_type == "email":
-        return await verify_email(identifier)
+        return await verify_email(identifier, platforms_filter)
     elif identifier_type == "phone":
-        return await verify_phone(identifier)
+        return await verify_phone(identifier, platforms_filter)
     else:
         return None
 
@@ -1385,13 +1392,14 @@ async def verify_identifiers_route(request: VerificationRequest):
         raise HTTPException(status_code=400, detail="No identifiers provided")
     
     identifiers = request.identifiers[:50]  # Raised limit with auto-threading
+    platforms_filter = request.platforms  # Optional platform filter
     
     # Auto-thread: process multiple identifiers concurrently
     sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
     
     async def verify_with_semaphore(identifier):
         async with sem:
-            return await verify_identifier(identifier)
+            return await verify_identifier(identifier, platforms_filter)
     
     tasks = [verify_with_semaphore(ident) for ident in identifiers]
     raw_results = await asyncio.gather(*tasks, return_exceptions=True)
