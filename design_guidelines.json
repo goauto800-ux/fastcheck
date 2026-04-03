@@ -1,0 +1,61 @@
+{
+  "theme": "dark",
+  "archetype": "Electric & Neon / Jewel & Luxury (High-end Cyber/Tech)",
+  "colors": {
+    "background": "#05030A",
+    "surface": "#0F0B1A",
+    "primary": "#3B82F6",
+    "secondary": "#8B5CF6",
+    "accent": "#6366F1",
+    "text_main": "#F8FAFC",
+    "text_muted": "#94A3B8",
+    "border": "rgba(255,255,255,0.08)",
+    "success": "#34D399",
+    "error": "#F43F5E",
+    "pending": "#FBBF24"
+  },
+  "typography": {
+    "heading_font": "Unbounded",
+    "body_font": "JetBrains Mono",
+    "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tighter font-black",
+    "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight font-bold",
+    "h3": "text-xl sm:text-2xl tracking-tight font-semibold",
+    "body": "text-sm text-slate-300 leading-relaxed",
+    "mono_data": "font-mono text-xs tracking-wider"
+  },
+  "layout_and_spacing": {
+    "philosophy": "Generous spacing for layout structure mixed with dense, highly legible technical data blocks. Dark mode with glowing borders to emulate high-speed verification tools.",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12",
+    "masonry_grid": "columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6",
+    "bento_grid": "grid grid-cols-1 lg:grid-cols-2 gap-8"
+  },
+  "components": {
+    "header": "Sticky glassmorphism header: backdrop-blur-xl bg-[#05030A]/80 border-b border-white/5. Must contain the FAST logo with font-black, tracking-tighter, and a blue-to-purple gradient text clip.",
+    "upload_zone": "Large drag-and-drop zone. border-2 border-dashed border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50 transition-colors rounded-2xl p-12 flex flex-col items-center justify-center. Use lucide-react 'UploadCloud'.",
+    "textarea_paste": "Terminal-style code editor look. bg-[#0A0710] border border-white/10 rounded-2xl p-6 font-mono text-sm text-blue-300 focus:ring-2 focus:ring-blue-500/50 outline-none resize-none h-48 w-full",
+    "action_button": "Generous padding (px-8 py-4), bg-gradient-to-r from-blue-600 to-purple-600 text-white font-bold rounded-xl hover:shadow-[0_0_20px_rgba(139,92,246,0.4)] transition-all duration-300",
+    "masonry_card": "break-inside-avoid bg-white/[0.02] border border-white/[0.05] rounded-2xl p-5 backdrop-blur-sm hover:border-blue-500/30 transition-all duration-300 shadow-[0_8px_32px_rgba(0,0,0,0.12)] relative overflow-hidden",
+    "platform_status_row": "Flex row, items center, justify-between. py-2.5 border-b border-white/5 last:border-0. Text size text-sm font-mono. Use React Icons."
+  },
+  "motion_and_interactions": {
+    "hover_states": "Cards lift slightly (-translate-y-1) with a subtle electric glow via drop-shadow.",
+    "loading": "Pulse animation on the platform rows currently being verified. Consider a subtle linear-gradient tracing beam over the active masonry card.",
+    "entrance": "Staggered fade-up and slight slide-up for masonry items using framer-motion."
+  },
+  "media": {
+    "hero_background": "https://images.unsplash.com/photo-1771875802948-0d0f3424fe6d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwzfHxkYXJrJTIwYWJzdHJhY3QlMjB0ZWNobm9sb2d5JTIwcHVycGxlJTIwYmx1ZSUyMGJhY2tncm91bmR8ZW58MHx8fHwxNzc1MjM3Mzc5fDA&ixlib=rb-4.1.0&q=85",
+    "hero_background_instructions": "Use as a fixed background wrapper for the entire app, opacity 5% to 15% max, with a heavy mix-blend-mode (like overlay or screen) and a radial gradient mask to fade it out at the edges (to pure #05030A). The data must remain 100% readable."
+  },
+  "instructions_to_main_agent": [
+    "Install dependencies: yarn add framer-motion react-icons lucide-react clsx tailwind-merge",
+    "Ensure 'Unbounded' (headings) and 'JetBrains Mono' (body/data) fonts are imported via Google Fonts in index.html.",
+    "Create standard .js / .jsx files (not .tsx).",
+    "App must be accessible without login. No authentication or history flows.",
+    "Build a dual-input hero section: one side for File Upload (CSV/TXT), the other for raw Text Paste.",
+    "The core results view MUST be a Masonry layout (use CSS: columns-1 sm:columns-2 lg:columns-3 xl:columns-4 gap-6 space-y-6). Each 'brick' is an email/phone item, showing the 5 platforms inside with their real-time verification status (Found, Not Found, Pending).",
+    "Mock the mass verification logic with a setTimeout/interval so the masonry grid fills up dynamically, giving a 'real-time streaming' effect.",
+    "Use react-icons/si for platform logos (SiUbereats, SiAmazon, SiNetflix, SiBinance, SiCoinbase).",
+    "Include an 'Export Results' button (mocking CSV download).",
+    "ALL interactive elements (buttons, inputs, masonry cards, toggles) MUST have appropriate 'data-testid' attributes (e.g., data-testid='upload-dropzone', data-testid='verify-submit-btn')."
+  ]
+}
