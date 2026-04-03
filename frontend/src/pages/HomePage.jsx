@@ -7,6 +7,7 @@ import UploadZone from "../components/UploadZone";
 import TextPasteZone from "../components/TextPasteZone";
 import ResultsGrid from "../components/ResultsGrid";
 import StatsBar from "../components/StatsBar";
+import ProxyManager from "../components/ProxyManager";
 import { Button } from "../components/ui/button";
 import { Download, Zap, Trash2 } from "lucide-react";
 
@@ -179,6 +180,9 @@ export default function HomePage() {
               Netflix, Uber Eats, Binance, Coinbase, Deliveroo, Snapchat et 30+ plateformes
             </p>
           </motion.div>
+
+          {/* Proxy Manager */}
+          <ProxyManager />
 
           {/* Input Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">

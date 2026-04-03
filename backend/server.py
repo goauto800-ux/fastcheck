@@ -67,11 +67,212 @@ from ignorant.modules.social_media.snapchat import snapchat as ignorant_snapchat
 from ignorant.modules.social_media.instagram import instagram as ignorant_instagram
 from ignorant.modules.shopping.amazon import amazon as ignorant_amazon
 
+
+# ============ PROXY MANAGER ============
+
+class ProxyManager:
+    """Manages rotating proxies for requests"""
+    
+    def __init__(self):
+        self.proxies: List[Dict[str, Any]] = []
+        self.current_index = 0
+        self.failed_proxies: Dict[str, int] = {}  # Track failures
+        self.max_failures = 3
+    
+    def add_proxy(self, proxy_url: str, proxy_type: str = "auto") -> Dict[str, Any]:
+        """Add a proxy to the pool"""
+        # Parse proxy URL
+        # Formats supported:
+        # - ip:port
+        # - ip:port:user:pass
+        # - user:pass@ip:port
+        # - protocol://ip:port
+        # - protocol://user:pass@ip:port
+        
+        proxy_data = self._parse_proxy(proxy_url, proxy_type)
+        if proxy_data:
+            # Check if already exists
+            for p in self.proxies:
+                if p["host"] == proxy_data["host"] and p["port"] == proxy_data["port"]:
+                    return {"success": False, "error": "Proxy already exists"}
+            
+            proxy_data["id"] = str(uuid.uuid4())
+            proxy_data["added_at"] = datetime.now(timezone.utc).isoformat()
+            proxy_data["requests"] = 0
+            proxy_data["failures"] = 0
+            proxy_data["status"] = "active"
+            self.proxies.append(proxy_data)
+            return {"success": True, "proxy": proxy_data}
+        return {"success": False, "error": "Invalid proxy format"}
+    
+    def _parse_proxy(self, proxy_url: str, proxy_type: str) -> Optional[Dict[str, Any]]:
+        """Parse proxy URL into components"""
+        proxy_url = proxy_url.strip()
+        
+        # Detect protocol from URL
+        protocol = None
+        if proxy_url.startswith("http://"):
+            protocol = "http"
+            proxy_url = proxy_url[7:]
+        elif proxy_url.startswith("https://"):
+            protocol = "http"  # httpx uses http for https proxies
+            proxy_url = proxy_url[8:]
+        elif proxy_url.startswith("socks4://"):
+            protocol = "socks4"
+            proxy_url = proxy_url[9:]
+        elif proxy_url.startswith("socks5://"):
+            protocol = "socks5"
+            proxy_url = proxy_url[9:]
+        
+        # Use provided type or detected protocol
+        if proxy_type != "auto" and proxy_type in ["http", "https", "socks4", "socks5"]:
+            protocol = proxy_type if proxy_type != "https" else "http"
+        elif protocol is None:
+            protocol = "http"  # Default
+        
+        # Parse auth and host:port
+        username = None
+        password = None
+        host = None
+        port = None
+        
+        # Format: user:pass@host:port
+        if "@" in proxy_url:
+            auth_part, host_part = proxy_url.rsplit("@", 1)
+            if ":" in auth_part:
+                username, password = auth_part.split(":", 1)
+        else:
+            host_part = proxy_url
+        
+        # Parse host:port or host:port:user:pass
+        parts = host_part.split(":")
+        if len(parts) == 2:
+            host, port = parts
+        elif len(parts) == 4:
+            host, port, username, password = parts
+        elif len(parts) == 1:
+            return None  # Invalid
+        else:
+            return None
+        
+        try:
+            port = int(port)
+        except ValueError:
+            return None
+        
+        return {
+            "protocol": protocol,
+            "host": host,
+            "port": port,
+            "username": username,
+            "password": password,
+            "url": self._build_proxy_url(protocol, host, port, username, password)
+        }
+    
+    def _build_proxy_url(self, protocol: str, host: str, port: int, username: str = None, password: str = None) -> str:
+        """Build proxy URL from components"""
+        if username and password:
+            return f"{protocol}://{username}:{password}@{host}:{port}"
+        return f"{protocol}://{host}:{port}"
+    
+    def remove_proxy(self, proxy_id: str) -> bool:
+        """Remove a proxy from the pool"""
+        for i, proxy in enumerate(self.proxies):
+            if proxy["id"] == proxy_id:
+                self.proxies.pop(i)
+                return True
+        return False
+    
+    def get_next_proxy(self) -> Optional[Dict[str, Any]]:
+        """Get next proxy in rotation"""
+        if not self.proxies:
+            return None
+        
+        # Filter active proxies
+        active_proxies = [p for p in self.proxies if p["status"] == "active"]
+        if not active_proxies:
+            # Reset all proxies if all are inactive
+            for p in self.proxies:
+                p["status"] = "active"
+                p["failures"] = 0
+            active_proxies = self.proxies
+        
+        if not active_proxies:
+            return None
+        
+        # Rotate through proxies
+        self.current_index = (self.current_index + 1) % len(active_proxies)
+        proxy = active_proxies[self.current_index]
+        proxy["requests"] += 1
+        return proxy
+    
+    def mark_failure(self, proxy_id: str):
+        """Mark a proxy as failed"""
+        for proxy in self.proxies:
+            if proxy["id"] == proxy_id:
+                proxy["failures"] += 1
+                if proxy["failures"] >= self.max_failures:
+                    proxy["status"] = "inactive"
+                break
+    
+    def mark_success(self, proxy_id: str):
+        """Mark a proxy request as successful"""
+        for proxy in self.proxies:
+            if proxy["id"] == proxy_id:
+                proxy["failures"] = max(0, proxy["failures"] - 1)
+                proxy["status"] = "active"
+                break
+    
+    def get_all_proxies(self) -> List[Dict[str, Any]]:
+        """Get all proxies with stats"""
+        return [{
+            "id": p["id"],
+            "host": p["host"],
+            "port": p["port"],
+            "protocol": p["protocol"],
+            "has_auth": bool(p["username"]),
+            "status": p["status"],
+            "requests": p["requests"],
+            "failures": p["failures"],
+            "added_at": p["added_at"]
+        } for p in self.proxies]
+    
+    def clear_all(self):
+        """Clear all proxies"""
+        self.proxies = []
+        self.current_index = 0
+        self.failed_proxies = {}
+    
+    def get_httpx_proxy(self) -> Optional[str]:
+        """Get proxy URL for httpx"""
+        proxy = self.get_next_proxy()
+        if proxy:
+            return proxy["url"]
+        return None
+    
+    def create_client(self, timeout: int = 30) -> httpx.AsyncClient:
+        """Create httpx client with proxy if available"""
+        proxy_url = self.get_httpx_proxy()
+        if proxy_url:
+            return httpx.AsyncClient(
+                timeout=timeout,
+                follow_redirects=True,
+                proxy=proxy_url
+            )
+        return httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+
+
+# Global proxy manager
+proxy_manager = ProxyManager()
+
+
 # User agents
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
 ]
 
 def get_headers():
@@ -83,7 +284,9 @@ def get_headers():
         "Connection": "keep-alive",
     }
 
-# Models
+
+# ============ MODELS ============
+
 class PlatformResult(BaseModel):
     platform: str
     status: str
@@ -104,6 +307,15 @@ class BulkVerificationResponse(BaseModel):
     total: int
     results: List[VerificationResult]
 
+class ProxyAddRequest(BaseModel):
+    proxies: List[str]  # List of proxy URLs
+    proxy_type: str = "auto"  # auto, http, https, socks4, socks5
+
+class ProxyResponse(BaseModel):
+    success: bool
+    message: str
+    proxies: List[Dict[str, Any]] = []
+
 
 # ============ PHONE NUMBER UTILITIES ============
 
@@ -111,18 +323,9 @@ def parse_phone_number(phone: str) -> tuple:
     """Parse phone number to extract country code and number"""
     phone = re.sub(r'[^\d+]', '', phone)
     
-    # Common country codes
     country_codes = {
-        '33': 'FR',  # France
-        '1': 'US',   # USA/Canada
-        '44': 'GB',  # UK
-        '49': 'DE',  # Germany
-        '39': 'IT',  # Italy
-        '34': 'ES',  # Spain
-        '32': 'BE',  # Belgium
-        '41': 'CH',  # Switzerland
-        '31': 'NL',  # Netherlands
-        '351': 'PT', # Portugal
+        '33': 'FR', '1': 'US', '44': 'GB', '49': 'DE', '39': 'IT',
+        '34': 'ES', '32': 'BE', '41': 'CH', '31': 'NL', '351': 'PT',
     }
     
     if phone.startswith('+'):
@@ -130,13 +333,11 @@ def parse_phone_number(phone: str) -> tuple:
     elif phone.startswith('00'):
         phone = phone[2:]
     
-    # Try to find country code
     for code, country in sorted(country_codes.items(), key=lambda x: -len(x[0])):
         if phone.startswith(code):
             national_number = phone[len(code):]
             return code, national_number, country
     
-    # Default to France if starts with 0
     if phone.startswith('0'):
         return '33', phone[1:], 'FR'
     
@@ -150,26 +351,7 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
         
-        # Try the Netflix login endpoint which indicates if email exists
-        login_data = {
-            "userLoginId": email,
-            "password": "wrongpassword123",
-            "rememberMe": True,
-            "flow": "websiteSignUp",
-            "mode": "login",
-            "action": "loginAction"
-        }
-        
-        response = await client.post(
-            "https://www.netflix.com/api/shakti/mre/cadmium/login",
-            json=login_data,
-            headers=headers,
-            follow_redirects=True
-        )
-        
-        # Alternative: check login page behavior
         login_page = await client.get(
             f"https://www.netflix.com/login?email={email}",
             headers=headers,
@@ -178,11 +360,10 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         
         text = login_page.text.lower()
         
-        # If password field is immediately shown, email might exist
         if 'incorrect password' in text or 'wrong password' in text:
             return {"exists": True, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
         
-        if response.status_code == 403 or 'captcha' in text:
+        if login_page.status_code == 403 or 'captcha' in text:
             return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "login_check"}
         
         return {"exists": False, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
@@ -198,10 +379,6 @@ async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, 
         headers["Content-Type"] = "application/json"
         headers["x-csrf-token"] = "x"
         
-        # Uber uses a login lookup endpoint
-        data = {"email": email}
-        
-        # First try the direct email lookup
         try:
             response = await client.post(
                 "https://auth.uber.com/v2/public/sdk/authenticate",
@@ -223,16 +400,6 @@ async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, 
         except Exception:
             pass
         
-        # Fallback: try forgot password page
-        forgot_page = await client.get(
-            "https://auth.uber.com/login/forgot-password",
-            headers=get_headers(),
-            follow_redirects=True
-        )
-        
-        if forgot_page.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "forgot_password"}
-        
         return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "sdk_auth"}
     except Exception as e:
         logging.error(f"Uber check error: {e}")
@@ -246,15 +413,9 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         headers["Content-Type"] = "application/json"
         headers["clienttype"] = "web"
         
-        # Binance registration check
-        data = {
-            "email": email,
-            "type": "register"
-        }
-        
         response = await client.post(
             "https://www.binance.com/bapi/accounts/v1/public/account/email/validate",
-            json=data,
+            json={"email": email, "type": "register"},
             headers=headers,
             timeout=15
         )
@@ -264,7 +425,6 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         
         if response.status_code == 200:
             result = response.json()
-            # If success is false and message mentions "registered", account exists
             if not result.get("success", True):
                 msg = str(result.get("message", "")).lower()
                 if "registered" in msg or "exist" in msg or "already" in msg:
@@ -281,9 +441,7 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
-        headers["Accept"] = "application/json"
         
-        # Try signup email check
         response = await client.post(
             "https://www.coinbase.com/api/v2/users",
             json={"email": email, "password": "TempPass123!@#"},
@@ -294,7 +452,6 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
         if response.status_code == 429:
             return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "signup_check"}
         
-        # Check response for "email already taken"
         try:
             result = response.json()
             errors = result.get("errors", [])
@@ -311,23 +468,16 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
 
 
 async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo via login/signup flow"""
+    """Check Deliveroo via login flow"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
         headers["Accept"] = "application/json, text/plain, */*"
         headers["Origin"] = "https://deliveroo.fr"
-        headers["Referer"] = "https://deliveroo.fr/"
-        
-        # Deliveroo login check endpoint
-        login_data = {
-            "email_address": email,
-            "password": "wrongpassword123"
-        }
         
         response = await client.post(
             "https://api.fr.deliveroo.com/orderapp/v1/login",
-            json=login_data,
+            json={"email_address": email, "password": "wrongpassword123"},
             headers=headers,
             timeout=15
         )
@@ -336,33 +486,11 @@ async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[
             return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "login_check"}
         
         if response.status_code == 401:
-            # 401 with "invalid password" means account exists
             try:
                 result = response.json()
                 msg = str(result).lower()
                 if "password" in msg or "credentials" in msg:
                     return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
-            except Exception:
-                pass
-        
-        if response.status_code == 404 or response.status_code == 400:
-            # Account doesn't exist
-            return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
-        
-        # Try signup check as fallback
-        signup_data = {"email_address": email}
-        signup_response = await client.post(
-            "https://api.fr.deliveroo.com/orderapp/v1/check-email",
-            json=signup_data,
-            headers=headers,
-            timeout=15
-        )
-        
-        if signup_response.status_code == 200:
-            try:
-                result = signup_response.json()
-                if result.get("registered") or result.get("exists"):
-                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "email_check"}
             except Exception:
                 pass
         
@@ -375,7 +503,6 @@ async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[
 # ============ PHONE NUMBER CHECKS ============
 
 async def check_snapchat_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Snapchat with phone number using ignorant"""
     try:
         out = []
         await ignorant_snapchat(phone, country_code, client, out)
@@ -394,7 +521,6 @@ async def check_snapchat_phone(phone: str, country_code: str, client: httpx.Asyn
 
 
 async def check_instagram_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Instagram with phone number using ignorant"""
     try:
         out = []
         await ignorant_instagram(phone, client, out)
@@ -413,7 +539,6 @@ async def check_instagram_phone(phone: str, client: httpx.AsyncClient) -> Dict[s
 
 
 async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Amazon with phone number using ignorant"""
     try:
         out = []
         await ignorant_amazon(phone, client, out)
@@ -432,12 +557,10 @@ async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str,
 
 
 async def check_uber_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber with phone number"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
         
-        # Format phone with +
         if not phone.startswith('+'):
             phone = '+' + phone
         
@@ -466,7 +589,6 @@ async def check_uber_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, A
 
 
 async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo with phone number"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -497,7 +619,7 @@ async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[s
         return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "phone_check"}
 
 
-# ============ HOLEHE MODULE CONFIGS ============
+# ============ PLATFORM CONFIGS ============
 
 HOLEHE_MODULES = {
     "amazon": {"func": amazon, "category": "Shopping"},
@@ -532,7 +654,6 @@ HOLEHE_MODULES = {
     "eventbrite": {"func": eventbrite, "category": "Events"},
 }
 
-# Custom email checks
 CUSTOM_EMAIL_PLATFORMS = {
     "netflix": {"func": check_netflix_custom, "category": "Streaming"},
     "uber_eats": {"func": check_uber_custom, "category": "Food"},
@@ -541,7 +662,6 @@ CUSTOM_EMAIL_PLATFORMS = {
     "deliveroo": {"func": check_deliveroo_custom, "category": "Food"},
 }
 
-# Phone number checks
 PHONE_PLATFORMS = {
     "snapchat": {"func": check_snapchat_phone, "category": "Social", "needs_country_code": True},
     "instagram": {"func": check_instagram_phone, "category": "Social", "needs_country_code": False},
@@ -554,8 +674,9 @@ ALL_EMAIL_PLATFORMS = list(HOLEHE_MODULES.keys()) + list(CUSTOM_EMAIL_PLATFORMS.
 ALL_PHONE_PLATFORMS = list(PHONE_PLATFORMS.keys())
 
 
+# ============ VERIFICATION FUNCTIONS ============
+
 async def check_holehe_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check email on holehe platform"""
     try:
         module_info = HOLEHE_MODULES.get(platform_name)
         if not module_info:
@@ -581,7 +702,6 @@ async def check_holehe_platform(email: str, platform_name: str, client: httpx.As
 
 
 async def check_custom_email_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check email on custom platform"""
     try:
         platform_info = CUSTOM_EMAIL_PLATFORMS.get(platform_name)
         if not platform_info:
@@ -597,7 +717,6 @@ async def check_custom_email_platform(email: str, platform_name: str, client: ht
 
 
 async def check_phone_platform(phone: str, country_code: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check phone on platform"""
     try:
         platform_info = PHONE_PLATFORMS.get(platform_name)
         if not platform_info:
@@ -618,13 +737,11 @@ async def check_phone_platform(phone: str, country_code: str, platform_name: str
 
 
 async def verify_email(email: str) -> VerificationResult:
-    """Verify email across all platforms"""
     platforms_results = []
     
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-        # Custom platforms first (priority)
+    # Use proxy manager to create client
+    async with proxy_manager.create_client(timeout=30) as client:
         custom_tasks = [check_custom_email_platform(email, name, client) for name in CUSTOM_EMAIL_PLATFORMS.keys()]
-        # Holehe platforms
         holehe_tasks = [check_holehe_platform(email, name, client) for name in HOLEHE_MODULES.keys()]
         
         all_results = await asyncio.gather(*(custom_tasks + holehe_tasks), return_exceptions=True)
@@ -650,7 +767,6 @@ async def verify_email(email: str) -> VerificationResult:
                 method=result.get("method", "unknown")
             ))
     
-    # Sort: found first
     status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
     platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
     
@@ -662,12 +778,10 @@ async def verify_email(email: str) -> VerificationResult:
 
 
 async def verify_phone(phone: str) -> VerificationResult:
-    """Verify phone number across supported platforms"""
     country_code, national_number, country = parse_phone_number(phone)
-    
     platforms_results = []
     
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    async with proxy_manager.create_client(timeout=30) as client:
         tasks = [check_phone_platform(national_number, country_code, name, client) for name in PHONE_PLATFORMS.keys()]
         all_results = await asyncio.gather(*tasks, return_exceptions=True)
         
@@ -692,7 +806,6 @@ async def verify_phone(phone: str) -> VerificationResult:
                 method=result.get("method", "phone")
             ))
     
-    # Sort: found first
     status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
     platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
     
@@ -704,7 +817,6 @@ async def verify_phone(phone: str) -> VerificationResult:
 
 
 async def verify_identifier(identifier: str) -> Optional[VerificationResult]:
-    """Verify identifier (email or phone)"""
     identifier = identifier.strip()
     if not identifier:
         return None
@@ -720,11 +832,9 @@ async def verify_identifier(identifier: str) -> Optional[VerificationResult]:
 
 
 def detect_identifier_type(identifier: str) -> str:
-    """Detect if identifier is email or phone"""
     identifier = identifier.strip()
     if "@" in identifier and "." in identifier:
         return "email"
-    # Check for phone number
     digits = sum(c.isdigit() for c in identifier)
     if digits >= 8 and digits <= 15:
         return "phone"
@@ -732,7 +842,6 @@ def detect_identifier_type(identifier: str) -> str:
 
 
 def parse_file_content(content: str) -> List[str]:
-    """Parse file content to extract identifiers"""
     identifiers = []
     
     try:
@@ -768,10 +877,11 @@ def parse_file_content(content: str) -> List[str]:
 async def root():
     return {
         "message": "FAST API - Identity Checker", 
-        "version": "4.0.0", 
+        "version": "5.0.0", 
         "mode": "real_verification",
         "email_platforms": len(ALL_EMAIL_PLATFORMS),
-        "phone_platforms": len(ALL_PHONE_PLATFORMS)
+        "phone_platforms": len(ALL_PHONE_PLATFORMS),
+        "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"])
     }
 
 @api_router.get("/health")
@@ -781,16 +891,81 @@ async def health_check():
         "email_platforms": ALL_EMAIL_PLATFORMS,
         "phone_platforms": ALL_PHONE_PLATFORMS,
         "total_platforms": len(ALL_EMAIL_PLATFORMS) + len(ALL_PHONE_PLATFORMS),
+        "proxies_count": len(proxy_manager.proxies),
         "mode": "real_verification"
     }
 
+
+# ============ PROXY ROUTES ============
+
+@api_router.post("/proxies/add", response_model=ProxyResponse)
+async def add_proxies(request: ProxyAddRequest):
+    """Add proxies to the pool"""
+    added = []
+    failed = []
+    
+    for proxy_url in request.proxies:
+        result = proxy_manager.add_proxy(proxy_url, request.proxy_type)
+        if result["success"]:
+            added.append(result["proxy"])
+        else:
+            failed.append({"url": proxy_url, "error": result["error"]})
+    
+    return ProxyResponse(
+        success=len(added) > 0,
+        message=f"Added {len(added)} proxies, {len(failed)} failed",
+        proxies=proxy_manager.get_all_proxies()
+    )
+
+@api_router.get("/proxies")
+async def get_proxies():
+    """Get all proxies with stats"""
+    return {
+        "proxies": proxy_manager.get_all_proxies(),
+        "total": len(proxy_manager.proxies),
+        "active": len([p for p in proxy_manager.proxies if p["status"] == "active"])
+    }
+
+@api_router.delete("/proxies/{proxy_id}")
+async def delete_proxy(proxy_id: str):
+    """Delete a proxy"""
+    if proxy_manager.remove_proxy(proxy_id):
+        return {"success": True, "message": "Proxy removed"}
+    raise HTTPException(status_code=404, detail="Proxy not found")
+
+@api_router.delete("/proxies")
+async def clear_proxies():
+    """Clear all proxies"""
+    proxy_manager.clear_all()
+    return {"success": True, "message": "All proxies cleared"}
+
+@api_router.post("/proxies/test")
+async def test_proxies():
+    """Test all proxies"""
+    results = []
+    for proxy in proxy_manager.proxies:
+        try:
+            async with httpx.AsyncClient(timeout=10, proxy=proxy["url"]) as client:
+                response = await client.get("https://httpbin.org/ip")
+                if response.status_code == 200:
+                    ip = response.json().get("origin", "unknown")
+                    results.append({"id": proxy["id"], "status": "working", "ip": ip})
+                    proxy_manager.mark_success(proxy["id"])
+                else:
+                    results.append({"id": proxy["id"], "status": "failed", "error": f"Status {response.status_code}"})
+                    proxy_manager.mark_failure(proxy["id"])
+        except Exception as e:
+            results.append({"id": proxy["id"], "status": "failed", "error": str(e)})
+            proxy_manager.mark_failure(proxy["id"])
+    
+    return {"results": results}
+
+
+# ============ VERIFICATION ROUTES ============
+
 @api_router.get("/platforms")
 async def list_platforms():
-    """List all available platforms"""
-    platforms_info = {
-        "email": [],
-        "phone": []
-    }
+    platforms_info = {"email": [], "phone": []}
     
     for name in CUSTOM_EMAIL_PLATFORMS.keys():
         platforms_info["email"].append({
@@ -820,7 +995,6 @@ async def list_platforms():
 
 @api_router.post("/verify", response_model=BulkVerificationResponse)
 async def verify_identifiers_route(request: VerificationRequest):
-    """Verify multiple identifiers"""
     if not request.identifiers:
         raise HTTPException(status_code=400, detail="No identifiers provided")
     
@@ -836,7 +1010,6 @@ async def verify_identifiers_route(request: VerificationRequest):
 
 @api_router.post("/verify/file", response_model=BulkVerificationResponse)
 async def verify_file(file: UploadFile = File(...)):
-    """Verify identifiers from uploaded file"""
     allowed_types = ['.csv', '.txt', '.text']
     file_ext = Path(file.filename).suffix.lower() if file.filename else ''
     
