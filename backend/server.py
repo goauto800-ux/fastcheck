@@ -403,137 +403,137 @@ def _get_proxy_for_curl_cffi() -> Optional[Dict[str, str]]:
 
 
 async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via direct login API - uses proxy with curl_cffi for browser TLS impersonation"""
+    """Check Netflix via forgot password API - more reliable than login"""
     import codecs
     
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "no_active_proxy"}
     
     try:
         from curl_cffi.requests import AsyncSession
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            # Step 1: GET login page to extract authURL and establish session cookies
-            resp = await session.get("https://www.netflix.com/login")
+        # Use longer timeout for slow proxies
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+            # Method 1: Try forgot password page - more reliable
+            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=30)
             
             if resp.status_code == 403:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "login_api", "reason": "ip_blocked"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password", "reason": "ip_blocked"}
             
             if resp.status_code != 200:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": f"status_{resp.status_code}"}
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
             
-            # Extract authURL from page JavaScript
+            # Extract authURL from page
             import re
             auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
-            if not auth_match:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": "no_authurl"}
+            auth_url = ""
+            if auth_match:
+                auth_url = codecs.decode(auth_match.group(1), 'unicode_escape')
             
-            auth_url = codecs.decode(auth_match.group(1), 'unicode_escape')
-            
-            # Step 2: POST login with email + dummy password
+            # Submit forgot password form
             payload = {
-                'userLoginId': email,
-                'password': 'CheckerPass123!@#',
-                'rememberMe': 'true',
-                'flow': 'websiteSignUp',
-                'mode': 'login',
-                'action': 'loginAction',
-                'withFields': 'rememberMe,nextProfileName,userLoginId,password,countryCode,countryIsoCode',
+                'email': email,
+                'action': 'loginHelpAction',
                 'authURL': auth_url,
-                'nextPage': '',
-                'showPassword': '',
-                'countryCode': '+33',
-                'countryIsoCode': 'FR',
+                'flow': 'loginHelp',
             }
             
             resp2 = await session.post(
-                "https://www.netflix.com/login",
+                "https://www.netflix.com/LoginHelp",
                 data=payload,
                 headers={
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'Referer': 'https://www.netflix.com/login',
+                    'Referer': 'https://www.netflix.com/LoginHelp',
                     'Origin': 'https://www.netflix.com',
                 },
+                timeout=30
             )
             
             text_lower = resp2.text.lower()
             final_url = str(resp2.url).lower()
             
-            # Check for account existence signals
-            # "Incorrect password" = email EXISTS on Netflix
-            if any(kw in text_lower for kw in ['incorrect password', 'mot de passe incorrect', 'wrong password', 'incorrectpassworderror']):
+            # Check signals
+            # "We've sent an email" = account EXISTS
+            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email', 'envoyé un e-mail', 'envoyé un email', 'vérifie ta boîte']):
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
             
-            # "Account on hold" / "Suspended" = email EXISTS
-            if any(kw in text_lower for kw in ['account on hold', 'account suspended', 'suspendu']):
+            # Redirect to sent page = EXISTS
+            if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
             
-            # Redirect to /browse or profiles = login success = email EXISTS
-            if '/browse' in final_url or '/profiles' in final_url:
+            # "Cannot find account" = NOT EXISTS
+            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "no account", "not found", "aucun compte"]):
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
             
-            # "Cannot find account" = email DOES NOT EXIST
-            if any(kw in text_lower for kw in ["cannot find an account", "can't find an account", "ne trouvons pas", "no account", "usernotfound", "invalid email"]):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
-            
-            # CAPTCHA or rate limit
-            if any(kw in text_lower for kw in ['too many', 'trop de tentatives', 'rate limit']):
+            # Rate limit
+            if any(kw in text_lower for kw in ['too many', 'trop de tentatives', 'rate limit', 'try again later']):
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
             
-            # Check for "Something went wrong" (CAPTCHA/block)
-            if 'something went wrong' in text_lower:
+            # CAPTCHA/block
+            if 'something went wrong' in text_lower or 'recaptcha' in text_lower:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": "captcha_or_block"}
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "captcha_or_block"}
             
-            # Inconclusive - proxy might be detected
+            # If we're still on LoginHelp with an error, likely not found
+            if '/loginhelp' in final_url:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+            
             proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_api"}
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
     
+    except asyncio.TimeoutError:
+        logging.error(f"Netflix check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "timeout"}
     except Exception as e:
         logging.error(f"Netflix check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_api", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "error"}
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber via login flow with proxy + curl_cffi browser impersonation"""
+    """Check Uber/Uber Eats via forgot password flow"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "no_active_proxy"}
     
     try:
         from curl_cffi.requests import AsyncSession
+        import re
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            # Step 1: GET auth page to get session cookies + CSRF
-            resp = await session.get("https://auth.uber.com/v2/")
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+            # Step 1: Visit the forgot password page to get CSRF and cookies
+            resp = await session.get("https://auth.uber.com/v2/forgot-password", timeout=30)
+            
+            if resp.status_code == 403:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "forgot_password", "reason": "ip_blocked"}
             
             if resp.status_code != 200:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": f"status_{resp.status_code}"}
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
             
-            # Extract CSRF token from cookies or page
-            import re
+            # Extract CSRF token
             csrf = ""
             for key, val in resp.cookies.items():
                 if "csrf" in key.lower():
@@ -544,212 +544,238 @@ async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, 
                 if csrf_match:
                     csrf = csrf_match.group(1)
             
-            # Step 2: POST SDK authenticate
+            # Step 2: Submit email to forgot password
             resp2 = await session.post(
-                "https://auth.uber.com/v2/public/sdk/authenticate",
-                json={
+                "https://auth.uber.com/v2/forgot-password",
+                data={
                     "email": email,
-                    "requestContext": {"deviceId": str(uuid.uuid4())},
-                    "oauthClientId": "uber-web"
+                    "csrfToken": csrf,
                 },
                 headers={
-                    "Content-Type": "application/json",
+                    "Content-Type": "application/x-www-form-urlencoded",
                     "x-csrf-token": csrf or "x",
                     "Origin": "https://auth.uber.com",
-                    "Referer": "https://auth.uber.com/v2/",
+                    "Referer": "https://auth.uber.com/v2/forgot-password",
                 },
+                timeout=30
             )
             
-            content_type = resp2.headers.get("content-type", "")
-            
-            if resp2.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": "csrf_blocked"}
+            text_lower = resp2.text.lower() if resp2.text else ""
+            final_url = str(resp2.url).lower()
             
             if resp2.status_code == 429:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "login_flow"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
             
-            if "text/html" in content_type:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": "blocked_html"}
+            # Check for "email sent" signals = account EXISTS
+            if any(kw in text_lower for kw in ['email sent', 'check your email', 'sent you', 'password reset', 'vérifie']):
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
             
-            if resp2.status_code == 200 and "application/json" in content_type:
-                try:
-                    result = resp2.json()
-                    result_str = str(result).lower()
-                    if result.get("nextStep") == "PASSWORD" or "password" in result_str:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "login_flow"}
-                    if result.get("nextStep") == "OTP" or "otp" in result_str:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "login_flow"}
-                    if "not found" in result_str or "no account" in result_str or "not exist" in result_str:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "login_flow"}
-                except Exception:
-                    pass
+            # Check for redirect to success page
+            if 'email-sent' in final_url or 'success' in final_url or 'check-email' in final_url:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
+            
+            # Check for "account not found" signals = account DOES NOT EXIST
+            if any(kw in text_lower for kw in ['not found', "can't find", 'no account', 'does not exist', 'pas trouvé']):
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
+            
+            # If still on forgot-password page with error
+            if 'forgot-password' in final_url and resp2.status_code == 200:
+                # Likely account not found or error
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
             
             proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "login_flow"}
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
     
+    except asyncio.TimeoutError:
+        logging.error(f"Uber check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "timeout"}
     except Exception as e:
         logging.error(f"Uber check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "login_flow", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "error"}
 
 
 async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via registration/forgot-password with proxy + curl_cffi"""
+    """Check Binance via forgot password with proxy + curl_cffi"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "no_active_proxy"}
     
     try:
         from curl_cffi.requests import AsyncSession
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            # Visit register page first for cookies
-            await session.get("https://accounts.binance.com/register", timeout=10)
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+            # Visit forgot password page first for cookies
+            resp = await session.get("https://accounts.binance.com/en/forgot-password", timeout=30)
             
-            # Try email validate endpoint
-            resp = await session.post(
-                "https://accounts.binance.com/bapi/accounts/v1/public/account/email/validate",
-                json={"email": email, "type": "register"},
+            if resp.status_code == 403:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password", "reason": "ip_blocked"}
+            
+            if resp.status_code != 200:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
+            
+            # Try forgot password endpoint
+            resp2 = await session.post(
+                "https://accounts.binance.com/bapi/accounts/v1/public/account/password/reset/send",
+                json={"email": email, "type": "email"},
                 headers={
                     "Content-Type": "application/json",
                     "clienttype": "web",
                     "Origin": "https://accounts.binance.com",
-                    "Referer": "https://accounts.binance.com/register",
+                    "Referer": "https://accounts.binance.com/en/forgot-password",
                 },
+                timeout=30
             )
             
-            if resp.status_code == 200:
+            if resp2.status_code == 200:
                 try:
-                    result = resp.json()
-                    if not result.get("success", True):
-                        msg = str(result.get("message", "")).lower()
-                        if "registered" in msg or "exist" in msg or "already" in msg:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
+                    result = resp2.json()
+                    # If success=true, email was sent = account exists
+                    if result.get("success"):
+                        proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
+                    # Check error message
+                    msg = str(result.get("message", "")).lower()
+                    code = str(result.get("code", "")).lower()
+                    if "not exist" in msg or "not found" in msg or "not registered" in msg:
+                        proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
+                    if "captcha" in msg or "verify" in msg:
+                        proxy_manager.mark_failure(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "captcha"}
                 except Exception:
                     pass
             
-            if resp.status_code == 429:
+            if resp2.status_code == 429:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
             
-            if resp.status_code == 403:
+            if resp2.status_code == 403:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "blocked"}
-            
-            if resp.status_code == 404:
-                # Endpoint removed - try forgot password as fallback
-                resp2 = await session.post(
-                    "https://accounts.binance.com/bapi/accounts/v1/public/account/password/reset/send",
-                    json={"email": email, "type": "email"},
-                    headers={
-                        "Content-Type": "application/json",
-                        "clienttype": "web",
-                        "Origin": "https://accounts.binance.com",
-                    },
-                )
-                
-                if resp2.status_code == 200:
-                    try:
-                        result2 = resp2.json()
-                        if result2.get("success"):
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "password_reset"}
-                        msg = str(result2.get("message", "")).lower()
-                        if "not exist" in msg or "not found" in msg:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "password_reset"}
-                    except Exception:
-                        pass
-                
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "endpoint_removed"}
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "blocked"}
             
             proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
     
+    except asyncio.TimeoutError:
+        logging.error(f"Binance check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "timeout"}
     except Exception as e:
         logging.error(f"Binance check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "error"}
 
 
 async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via signup/forgot-password with proxy + curl_cffi"""
+    """Check Coinbase via forgot password with proxy + curl_cffi"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "no_active_proxy"}
     
     try:
         from curl_cffi.requests import AsyncSession
+        import re
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            # Try signup endpoint
-            resp = await session.post(
-                "https://www.coinbase.com/api/v2/users",
-                json={"email": email, "password": "TempCheckPass123!@#"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Origin": "https://www.coinbase.com",
-                    "Referer": "https://www.coinbase.com/signup",
-                },
-            )
-            
-            if resp.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+            # Visit login.coinbase.com forgot password page (confirmed working)
+            resp = await session.get("https://login.coinbase.com/forgot-password", timeout=30)
             
             if resp.status_code == 403:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "blocked"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password", "reason": "ip_blocked"}
             
-            if resp.status_code in [200, 400, 422]:
-                try:
-                    result = resp.json()
-                    errors = result.get("errors", [])
-                    result_str = str(errors).lower()
-                    if "taken" in result_str or "already" in result_str or "exist" in result_str:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
-                except Exception:
-                    pass
+            if resp.status_code != 200:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
             
-            if resp.status_code == 404:
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "endpoint_removed"}
+            # Extract CSRF token if present
+            csrf = ""
+            csrf_match = re.search(r'name="csrf[_-]?token"[^>]*value="([^"]+)"', resp.text, re.I)
+            if csrf_match:
+                csrf = csrf_match.group(1)
+            
+            # Submit forgot password form
+            resp2 = await session.post(
+                "https://login.coinbase.com/forgot-password",
+                data={
+                    "email": email,
+                    "csrf_token": csrf,
+                },
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Origin": "https://login.coinbase.com",
+                    "Referer": "https://login.coinbase.com/forgot-password",
+                },
+                timeout=30
+            )
+            
+            text_lower = resp2.text.lower() if resp2.text else ""
+            final_url = str(resp2.url).lower()
+            
+            if resp2.status_code == 429:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
+            
+            # Check for "email sent" signals = account EXISTS
+            if any(kw in text_lower for kw in ['email sent', 'check your email', 'sent you', 'reset link', 'we sent']):
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
+            
+            # Check for success page redirect
+            if 'email-sent' in final_url or 'success' in final_url or 'check-email' in final_url:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
+            
+            # Check for "account not found" signals
+            if any(kw in text_lower for kw in ['not found', "can't find", 'no account', 'does not exist', 'invalid email']):
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
+            
+            # If we got 200 and still on forgot-password, assume not found
+            if resp2.status_code == 200 and 'forgot-password' in final_url:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
             proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
     
+    except asyncio.TimeoutError:
+        logging.error(f"Coinbase check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "timeout"}
     except Exception as e:
         logging.error(f"Coinbase check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "error"}
 
 
 async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo via login flow with proxy + curl_cffi"""
+    """Check Deliveroo via login page with proxy + curl_cffi"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
@@ -762,64 +788,74 @@ async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[
     try:
         from curl_cffi.requests import AsyncSession
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            # Visit site for cookies
-            await session.get("https://deliveroo.fr/fr/", timeout=10)
-            
-            # Try login endpoint
-            resp = await session.post(
-                "https://consumer-ow-api.deliveroo.com/orderapp/v1/login",
-                json={"email_address": email, "password": "CheckerPass123!"},
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json, text/plain, */*",
-                    "Origin": "https://deliveroo.fr",
-                    "Referer": "https://deliveroo.fr/fr/login",
-                },
-            )
-            
-            if resp.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+            # Use deliveroo.com (international) which is accessible
+            resp = await session.get("https://deliveroo.com/login", timeout=30)
             
             if resp.status_code == 403:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check", "reason": "ip_blocked"}
+            
+            if resp.status_code != 200:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": f"status_{resp.status_code}"}
+            
+            # Try login with wrong password - if account exists, we get "wrong password"
+            # If not exists, we get "account not found"
+            resp2 = await session.post(
+                "https://consumer-ow-api.deliveroo.com/orderapp/v1/login",
+                json={
+                    "email_address": email,
+                    "password": "WrongPass123!"
+                },
+                headers={
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                    "Origin": "https://deliveroo.com",
+                    "Referer": "https://deliveroo.com/login",
+                },
+                timeout=30
+            )
+            
+            text_lower = resp2.text.lower() if resp2.text else ""
+            
+            if resp2.status_code == 429:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
+            
+            if resp2.status_code == 403:
+                proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "blocked"}
             
-            if resp.status_code == 401:
-                try:
-                    result = resp.json()
-                    msg = str(result).lower()
-                    if "password" in msg or "credentials" in msg or "incorrect" in msg:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-                except Exception:
-                    pass
+            # 401 with "incorrect password" = account EXISTS
+            if resp2.status_code == 401:
+                if any(kw in text_lower for kw in ['password', 'incorrect', 'wrong', 'invalid credentials']):
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
             
-            if resp.status_code == 200:
+            # 200 = somehow logged in = account EXISTS
+            if resp2.status_code == 200:
                 proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
             
-            if resp.status_code == 404:
-                # Try alternative endpoint
-                resp2 = await session.post(
-                    "https://api.fr.deliveroo.com/orderapp/v1/login",
-                    json={"email_address": email, "password": "CheckerPass123!"},
-                    headers={
-                        "Content-Type": "application/json",
-                        "Accept": "application/json",
-                        "Origin": "https://deliveroo.fr",
-                    },
-                )
-                if resp2.status_code == 401:
+            # 400/404 = account not found
+            if resp2.status_code in [400, 404]:
+                if any(kw in text_lower for kw in ['not found', 'no account', 'does not exist', "doesn't exist"]):
                     proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
+                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
+                # 404 likely means endpoint changed or not found
                 if resp2.status_code == 404:
-                    return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "endpoint_removed"}
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
+                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
             
             proxy_manager.mark_success(proxy_info["proxy_id"])
             return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
     
+    except asyncio.TimeoutError:
+        logging.error(f"Deliveroo check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "timeout"}
     except Exception as e:
         logging.error(f"Deliveroo check error: {e}")
         if proxy_info:
