@@ -11,7 +11,7 @@ import ProxyManager from "../components/ProxyManager";
 import PlatformSelector from "../components/PlatformSelector";
 import FilePreviewModal from "../components/FilePreviewModal";
 import { Button } from "../components/ui/button";
-import { Download, Zap, Trash2, ShieldAlert } from "lucide-react";
+import { Download, Zap, Trash2, ShieldAlert, FileText } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -168,6 +168,68 @@ export default function HomePage() {
     toast.success("Résultats exportés en CSV");
   }, [results]);
 
+  const handleExportTxt = useCallback(() => {
+    if (results.length === 0) {
+      toast.error("Aucun résultat à exporter");
+      return;
+    }
+
+    const statusMap = {
+      "found": "✓ Trouvé",
+      "not_found": "✗ Non trouvé",
+      "unverifiable": "⚠ Non vérifiable",
+      "rate_limited": "⏳ Limité",
+      "error": "⚠ Erreur"
+    };
+
+    let txtContent = "═══════════════════════════════════════════\n";
+    txtContent += "       FAST - Résultats de vérification\n";
+    txtContent += `       Date: ${new Date().toLocaleDateString('fr-FR')}\n`;
+    txtContent += "═══════════════════════════════════════════\n\n";
+
+    results.forEach((r, idx) => {
+      const type = r.identifier_type === "email" ? "Email" : "Téléphone";
+      const foundCount = r.platforms.filter(p => p.status === "found").length;
+      const totalCount = r.platforms.length;
+
+      txtContent += `┌─── ${type}: ${r.identifier}\n`;
+      txtContent += `│    Trouvé sur ${foundCount}/${totalCount} plateformes\n`;
+      txtContent += `│\n`;
+
+      r.platforms.forEach((p) => {
+        const name = p.platform.charAt(0).toUpperCase() + p.platform.slice(1).replace('_', ' ');
+        const status = statusMap[p.status] || p.status;
+        txtContent += `│  ${status.padEnd(22)} ${name}\n`;
+      });
+
+      txtContent += `└${"─".repeat(44)}\n\n`;
+    });
+
+    // Summary
+    const totalFound = results.reduce((acc, r) => acc + r.platforms.filter(p => p.status === "found").length, 0);
+    const totalNotFound = results.reduce((acc, r) => acc + r.platforms.filter(p => p.status === "not_found").length, 0);
+    const totalUnverifiable = results.reduce((acc, r) => acc + r.platforms.filter(p => p.status === "unverifiable").length, 0);
+
+    txtContent += "═══════════════════════════════════════════\n";
+    txtContent += "                 RÉSUMÉ\n";
+    txtContent += "═══════════════════════════════════════════\n";
+    txtContent += `  Identifiants vérifiés: ${results.length}\n`;
+    txtContent += `  Trouvés: ${totalFound}\n`;
+    txtContent += `  Non trouvés: ${totalNotFound}\n`;
+    txtContent += `  Non vérifiables: ${totalUnverifiable}\n`;
+    txtContent += "═══════════════════════════════════════════\n";
+
+    const blob = new Blob([txtContent], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `fast_results_${new Date().toISOString().split("T")[0]}.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+
+    toast.success("Résultats exportés en TXT");
+  }, [results]);
+
   const handleClear = useCallback(() => {
     setResults([]);
     setProgress(0);
@@ -317,7 +379,7 @@ export default function HomePage() {
             >
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                 <StatsBar stats={stats} />
-                <div className="flex gap-3">
+                <div className="flex gap-2 flex-wrap">
                   <Button
                     variant="outline"
                     size="sm"
@@ -335,7 +397,16 @@ export default function HomePage() {
                     className="bg-gradient-to-r from-blue-600 to-purple-600 hover:shadow-[0_0_20px_rgba(139,92,246,0.4)] transition-all"
                   >
                     <Download className="w-4 h-4 mr-2" />
-                    Exporter CSV
+                    CSV
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={handleExportTxt}
+                    data-testid="export-txt-btn"
+                    className="bg-gradient-to-r from-indigo-600 to-blue-600 hover:shadow-[0_0_20px_rgba(99,102,241,0.4)] transition-all"
+                  >
+                    <FileText className="w-4 h-4 mr-2" />
+                    TXT
                   </Button>
                 </div>
               </div>
