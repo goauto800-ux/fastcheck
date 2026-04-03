@@ -507,100 +507,30 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber/Uber Eats via forgot password flow"""
+    """Check Uber/Uber Eats - NOTE: Uber no longer reveals if accounts exist for security"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "api", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "api", "reason": "no_active_proxy"}
     
-    try:
-        from curl_cffi.requests import AsyncSession
-        import re
-        
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
-            # Step 1: Visit the forgot password page to get CSRF and cookies
-            resp = await session.get("https://auth.uber.com/v2/forgot-password", timeout=30)
-            
-            if resp.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "forgot_password", "reason": "ip_blocked"}
-            
-            if resp.status_code != 200:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
-            
-            # Extract CSRF token
-            csrf = ""
-            for key, val in resp.cookies.items():
-                if "csrf" in key.lower():
-                    csrf = val
-                    break
-            if not csrf:
-                csrf_match = re.search(r'"csrfToken"\s*:\s*"([^"]+)"', resp.text)
-                if csrf_match:
-                    csrf = csrf_match.group(1)
-            
-            # Step 2: Submit email to forgot password
-            resp2 = await session.post(
-                "https://auth.uber.com/v2/forgot-password",
-                data={
-                    "email": email,
-                    "csrfToken": csrf,
-                },
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "x-csrf-token": csrf or "x",
-                    "Origin": "https://auth.uber.com",
-                    "Referer": "https://auth.uber.com/v2/forgot-password",
-                },
-                timeout=30
-            )
-            
-            text_lower = resp2.text.lower() if resp2.text else ""
-            final_url = str(resp2.url).lower()
-            
-            if resp2.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
-            
-            # Check for "email sent" signals = account EXISTS
-            if any(kw in text_lower for kw in ['email sent', 'check your email', 'sent you', 'password reset', 'vérifie']):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
-            
-            # Check for redirect to success page
-            if 'email-sent' in final_url or 'success' in final_url or 'check-email' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
-            
-            # Check for "account not found" signals = account DOES NOT EXIST
-            if any(kw in text_lower for kw in ['not found', "can't find", 'no account', 'does not exist', 'pas trouvé']):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
-            
-            # If still on forgot-password page with error
-            if 'forgot-password' in final_url and resp2.status_code == 200:
-                # Likely account not found or error
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
-            
-            proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "forgot_password"}
+    # Uber has implemented strong privacy protection - they no longer reveal
+    # whether an account exists or not. All forgot-password/login attempts
+    # return the same generic response regardless of whether the email exists.
+    # This is a security measure by Uber to prevent email enumeration.
     
-    except asyncio.TimeoutError:
-        logging.error(f"Uber check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "timeout"}
-    except Exception as e:
-        logging.error(f"Uber check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "forgot_password", "reason": "error"}
+    proxy_manager.mark_success(proxy_info["proxy_id"])
+    return {
+        "exists": False, 
+        "rate_limited": False, 
+        "unverifiable": True, 
+        "domain": "uber.com", 
+        "method": "api", 
+        "reason": "uber_privacy_protection"
+    }
 
 
 async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
