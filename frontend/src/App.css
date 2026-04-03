@@ -1,34 +1,112 @@
-.App-logo {
-    height: 40vmin;
-    pointer-events: none;
+/* FAST App Styles */
+
+.App {
+  min-height: 100vh;
+  background-color: #05030A;
 }
 
-@media (prefers-reduced-motion: no-preference) {
-    .App-logo {
-        animation: App-logo-spin infinite 20s linear;
-    }
+/* Background overlay */
+.bg-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 0;
 }
 
-.App-header {
-    background-color: #0f0f10;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    font-size: calc(10px + 2vmin);
-    color: white;
+/* Drop zone styles */
+.drop-zone {
+  transition: all 0.3s ease;
 }
 
-.App-link {
-    color: #61dafb;
+.drop-zone.drag-over {
+  border-color: #3B82F6;
+  background-color: rgba(59, 130, 246, 0.15);
+  transform: scale(1.02);
 }
 
-@keyframes App-logo-spin {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(360deg);
-    }
+/* Platform icons */
+.platform-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+/* Status indicators */
+.status-found {
+  color: #34D399;
+}
+
+.status-not-found {
+  color: #F43F5E;
+}
+
+.status-pending {
+  color: #FBBF24;
+}
+
+/* Masonry card animation */
+.masonry-card {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Button hover glow */
+.btn-glow:hover {
+  box-shadow: 0 0 30px rgba(139, 92, 246, 0.5);
+}
+
+/* Progress bar */
+.progress-bar {
+  background: linear-gradient(90deg, #3B82F6, #8B5CF6, #6366F1);
+  background-size: 200% 100%;
+  animation: gradient-shift 2s ease infinite;
+}
+
+@keyframes gradient-shift {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Textarea custom styles */
+.terminal-textarea {
+  background-color: #0A0710;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #93C5FD;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.terminal-textarea:focus {
+  outline: none;
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.terminal-textarea::placeholder {
+  color: #475569;
+}
+
+/* Custom selection */
+::selection {
+  background: rgba(139, 92, 246, 0.4);
+  color: #F8FAFC;
 }
