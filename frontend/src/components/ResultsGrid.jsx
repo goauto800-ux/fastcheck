@@ -1,6 +1,6 @@
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-  Mail, Phone, CheckCircle, XCircle, Loader2, Search, AlertCircle, 
+  Mail, Phone, CheckCircle, XCircle, Loader2, Search, AlertCircle, ShieldAlert,
   Globe, ShoppingCart, Music, Camera, MessageCircle, Code, 
   Briefcase, Car, Coffee, Calendar, Dumbbell
 } from "lucide-react";
@@ -101,6 +101,15 @@ function StatusBadge({ status }) {
     );
   }
 
+  if (status === "unverifiable") {
+    return (
+      <div className="flex items-center gap-1.5 text-amber-500">
+        <ShieldAlert className="w-3.5 h-3.5" />
+        <span className="text-xs font-mono">Non vérifiable</span>
+      </div>
+    );
+  }
+
   if (status === "rate_limited") {
     return (
       <div className="flex items-center gap-1.5 text-orange-400">
@@ -139,7 +148,9 @@ function StatusBadge({ status }) {
 function ResultCard({ result, index }) {
   const isEmail = result.identifier_type === "email";
   const foundCount = result.platforms.filter((p) => p.status === "found").length;
+  const unverifiableCount = result.platforms.filter((p) => p.status === "unverifiable").length;
   const totalCount = result.platforms.length;
+  const verifiedCount = totalCount - unverifiableCount;
 
   return (
     <motion.div
@@ -167,7 +178,10 @@ function ResultCard({ result, index }) {
               {result.identifier}
             </p>
             <p className="text-slate-500 text-xs font-mono mt-0.5">
-              {isEmail ? "Email" : "Téléphone"} • {foundCount}/{totalCount} trouvé(s)
+              {isEmail ? "Email" : "Téléphone"} • {foundCount}/{verifiedCount} vérifié(s)
+              {unverifiableCount > 0 && (
+                <span className="text-amber-500/70"> • {unverifiableCount} non vérifiable(s)</span>
+              )}
             </p>
           </div>
         </div>

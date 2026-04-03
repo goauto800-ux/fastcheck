@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { toast } from "sonner";
 import axios from "axios";
@@ -9,7 +9,7 @@ import ResultsGrid from "../components/ResultsGrid";
 import StatsBar from "../components/StatsBar";
 import ProxyManager from "../components/ProxyManager";
 import { Button } from "../components/ui/button";
-import { Download, Zap, Trash2 } from "lucide-react";
+import { Download, Zap, Trash2, ShieldAlert } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -19,6 +19,20 @@ export default function HomePage() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [totalToVerify, setTotalToVerify] = useState(0);
+  const [proxyCount, setProxyCount] = useState(0);
+
+  // Check proxy status on mount
+  useEffect(() => {
+    const checkProxies = async () => {
+      try {
+        const resp = await axios.get(`${API}/proxies`);
+        setProxyCount(resp.data.active || 0);
+      } catch (e) {
+        setProxyCount(0);
+      }
+    };
+    checkProxies();
+  }, []);
 
   const handleVerify = useCallback(async (identifiers) => {
     if (!identifiers || identifiers.length === 0) {
@@ -96,26 +110,34 @@ export default function HomePage() {
       return;
     }
 
-    // Create CSV content
-    const headers = ["Identifiant", "Type", "Uber Eats", "Amazon", "Netflix", "Binance", "Coinbase"];
+    // Get all unique platform names from results
+    const allPlatforms = new Set();
+    results.forEach(r => r.platforms.forEach(p => allPlatforms.add(p.platform)));
+    const platformList = Array.from(allPlatforms).sort();
+
+    // Create CSV content with all platforms
+    const headers = ["Identifiant", "Type", ...platformList.map(p => p.charAt(0).toUpperCase() + p.slice(1).replace('_', ' '))];
     const rows = results.map((r) => {
       const platformStatuses = {};
       r.platforms.forEach((p) => {
-        platformStatuses[p.platform] = p.status === "found" ? "Trouvé" : "Non trouvé";
+        const statusMap = {
+          "found": "Trouvé",
+          "not_found": "Non trouvé",
+          "unverifiable": "Non vérifiable (proxy requis)",
+          "rate_limited": "Limité",
+          "error": "Erreur"
+        };
+        platformStatuses[p.platform] = statusMap[p.status] || p.status;
       });
       return [
         r.identifier,
         r.identifier_type === "email" ? "Email" : "Téléphone",
-        platformStatuses["uber_eats"] || "-",
-        platformStatuses["amazon"] || "-",
-        platformStatuses["netflix"] || "-",
-        platformStatuses["binance"] || "-",
-        platformStatuses["coinbase"] || "-",
+        ...platformList.map(p => platformStatuses[p] || "-"),
       ];
     });
 
-    const csvContent = [headers, ...rows].map((row) => row.join(",")).join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const csvContent = [headers, ...rows].map((row) => row.map(cell => `"${cell}"`).join(",")).join("\n");
+    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
@@ -141,6 +163,10 @@ export default function HomePage() {
     ),
     notFound: results.reduce(
       (acc, r) => acc + r.platforms.filter((p) => p.status === "not_found").length,
+      0
+    ),
+    unverifiable: results.reduce(
+      (acc, r) => acc + r.platforms.filter((p) => p.status === "unverifiable").length,
       0
     ),
     rateLimited: results.reduce(
@@ -182,7 +208,29 @@ export default function HomePage() {
           </motion.div>
 
           {/* Proxy Manager */}
-          <ProxyManager />
+          <ProxyManager onProxyChange={(count) => setProxyCount(count)} />
+
+          {/* Proxy Warning Banner */}
+          {proxyCount === 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mb-8 p-4 rounded-xl border border-amber-500/30 bg-amber-500/5 backdrop-blur-sm"
+            >
+              <div className="flex items-start gap-3">
+                <ShieldAlert className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-amber-400 text-sm font-medium font-mono">
+                    Aucun proxy configuré
+                  </p>
+                  <p className="text-amber-400/70 text-xs font-mono mt-1">
+                    Netflix, Uber Eats, Binance, Coinbase et Deliveroo nécessitent des proxies résidentiels pour fonctionner. 
+                    Sans proxy, ces plateformes afficheront "Non vérifiable". Les 30+ autres plateformes fonctionnent normalement.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
 
           {/* Input Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-12">

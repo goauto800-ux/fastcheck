@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Users, CheckCircle, XCircle, AlertCircle } from "lucide-react";
+import { Users, CheckCircle, XCircle, AlertCircle, ShieldAlert } from "lucide-react";
 
 export default function StatsBar({ stats }) {
   return (
@@ -38,6 +38,18 @@ export default function StatsBar({ stats }) {
           <p className="text-lg font-bold text-rose-400 font-mono">{stats.notFound}</p>
         </div>
       </div>
+
+      {stats.unverifiable > 0 && (
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
+            <ShieldAlert className="w-4 h-4 text-amber-500" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Non vérifiables</p>
+            <p className="text-lg font-bold text-amber-500 font-mono">{stats.unverifiable}</p>
+          </div>
+        </div>
+      )}
 
       {stats.rateLimited > 0 && (
         <div className="flex items-center gap-2">

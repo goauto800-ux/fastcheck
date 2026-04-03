@@ -11,7 +11,7 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
 
-export default function ProxyManager() {
+export default function ProxyManager({ onProxyChange }) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [proxies, setProxies] = useState([]);
   const [proxyInput, setProxyInput] = useState("");
@@ -22,11 +22,15 @@ export default function ProxyManager() {
   const fetchProxies = useCallback(async () => {
     try {
       const response = await axios.get(`${API}/proxies`);
-      setProxies(response.data.proxies || []);
+      const proxyList = response.data.proxies || [];
+      setProxies(proxyList);
+      if (onProxyChange) {
+        onProxyChange(proxyList.filter(p => p.status === "active").length);
+      }
     } catch (error) {
       console.error("Error fetching proxies:", error);
     }
-  }, []);
+  }, [onProxyChange]);
 
   useEffect(() => {
     if (isExpanded) {
@@ -56,7 +60,11 @@ export default function ProxyManager() {
       if (response.data.success) {
         toast.success(response.data.message);
         setProxyInput("");
-        setProxies(response.data.proxies || []);
+        const proxyList = response.data.proxies || [];
+        setProxies(proxyList);
+        if (onProxyChange) {
+          onProxyChange(proxyList.filter(p => p.status === "active").length);
+        }
       } else {
         toast.error("Erreur lors de l'ajout des proxies");
       }
@@ -71,24 +79,33 @@ export default function ProxyManager() {
   const handleDeleteProxy = useCallback(async (proxyId) => {
     try {
       await axios.delete(`${API}/proxies/${proxyId}`);
-      setProxies(prev => prev.filter(p => p.id !== proxyId));
+      setProxies(prev => {
+        const newList = prev.filter(p => p.id !== proxyId);
+        if (onProxyChange) {
+          onProxyChange(newList.filter(p => p.status === "active").length);
+        }
+        return newList;
+      });
       toast.success("Proxy supprimé");
     } catch (error) {
       console.error("Error deleting proxy:", error);
       toast.error("Erreur lors de la suppression");
     }
-  }, []);
+  }, [onProxyChange]);
 
   const handleClearAll = useCallback(async () => {
     try {
       await axios.delete(`${API}/proxies`);
       setProxies([]);
+      if (onProxyChange) {
+        onProxyChange(0);
+      }
       toast.success("Tous les proxies supprimés");
     } catch (error) {
       console.error("Error clearing proxies:", error);
       toast.error("Erreur lors de la suppression");
     }
-  }, []);
+  }, [onProxyChange]);
 
   const handleTestProxies = useCallback(async () => {
     if (proxies.length === 0) {
@@ -301,8 +318,8 @@ export default function ProxyManager() {
                   <p className="text-xs text-orange-400/80 font-mono">
                     ⚠️ <strong>Netflix, Uber Eats, Deliveroo, Binance, Coinbase</strong> nécessitent des 
                     <strong> proxies résidentiels</strong> pour fonctionner correctement. 
-                    Sans proxies, ces plateformes retourneront souvent "Non trouvé" même si le compte existe.
-                    Les proxies datacenter sont généralement bloqués.
+                    Sans proxies, ces plateformes afficheront "Non vérifiable".
+                    Les proxies datacenter sont généralement bloqués par ces services.
                   </p>
                 </div>
               </div>

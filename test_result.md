@@ -101,3 +101,97 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Le checker Uber Eats, Netflix, Binance, Coinbase, Deliveroo renvoie de faux résultats - retournait 'not_found' au lieu de signaler que la vérification est impossible sans proxy"
+
+backend:
+  - task: "Fix custom platform checks returning false 'not_found' results"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Updated check_netflix_custom, check_uber_custom, check_binance_custom, check_coinbase_custom, check_deliveroo_custom to detect when checks fail due to blocking/CAPTCHA/endpoint removal. Now returns 'unverifiable' status instead of false 'not_found'. Also updated phone checks (uber_phone, deliveroo_phone). Added batch processing with delays for holehe checks to reduce rate limiting."
+
+  - task: "Updated API response to include 'unverifiable' status"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "verify_email and verify_phone now properly propagate 'unverifiable' status. Health endpoint shows custom_platforms_need_proxy list."
+
+frontend:
+  - task: "Display 'Non vérifiable' status for unverifiable platforms"
+    implemented: true
+    working: true
+    file: "frontend/src/components/ResultsGrid.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Added 'unverifiable' status badge with ShieldAlert icon in amber color. Shows 'Non vérifiable' text."
+
+  - task: "StatsBar shows unverifiable count"
+    implemented: true
+    working: true
+    file: "frontend/src/components/StatsBar.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Added 'Non vérifiables' stat with amber styling"
+
+  - task: "Proxy warning banner when no proxies configured"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/HomePage.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Added amber warning banner saying 'Aucun proxy configuré' explaining which platforms need proxies"
+
+  - task: "Improved CSV export with all platforms and new statuses"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/HomePage.jsx"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "CSV export now includes all platforms and shows 'Non vérifiable (proxy requis)' status"
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Fix custom platform checks returning false 'not_found' results"
+    - "Updated API response to include 'unverifiable' status"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+    - message: "Fixed the core issue: 5 custom platform checks (Uber Eats, Netflix, Binance, Coinbase, Deliveroo) now return 'unverifiable' status instead of false 'not_found' when checks cannot be performed (blocked, CAPTCHA, endpoint removed, no proxy). The backend POST /api/verify now includes 'unverifiable' as a valid status. Test that: 1) Without proxies, these 5 platforms return 'unverifiable' status. 2) The verify endpoint still works for holehe-based platforms. 3) The health endpoint returns custom_platforms_need_proxy list."

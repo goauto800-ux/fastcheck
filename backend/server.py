@@ -347,7 +347,7 @@ def parse_phone_number(phone: str) -> tuple:
 # ============ CUSTOM PLATFORM CHECKS ============
 
 async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via login API"""
+    """Check Netflix via login API - requires residential proxy to work reliably"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -359,21 +359,34 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         )
         
         text = login_page.text.lower()
+        final_url = str(login_page.url).lower()
+        
+        # Detect if we got blocked/captcha'd
+        if 'captcha' in text or 'recaptcha' in text or 'robot' in text:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_check", "reason": "captcha"}
+        
+        if 'notfound' in final_url or login_page.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_check", "reason": "blocked"}
         
         if 'incorrect password' in text or 'wrong password' in text:
-            return {"exists": True, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
+            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_check"}
         
-        if login_page.status_code == 403 or 'captcha' in text:
-            return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "login_check"}
+        if login_page.status_code == 429:
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "login_check"}
         
-        return {"exists": False, "rate_limited": False, "domain": "netflix.com", "method": "login_check"}
+        # If we got a normal page but no clear signal, it's unverifiable without proxy
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_check", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "login_check"}
     except Exception as e:
         logging.error(f"Netflix check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "netflix.com", "method": "login_check"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "login_check", "reason": "error"}
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber via login flow"""
+    """Check Uber via login flow - requires residential proxy to work reliably"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -391,23 +404,41 @@ async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, 
                 timeout=15
             )
             
-            if response.status_code == 200:
+            # Check if we got a real API response or were blocked
+            content_type = response.headers.get("content-type", "")
+            
+            if response.status_code == 403:
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "sdk_auth", "reason": "csrf_blocked"}
+            
+            if response.status_code == 404:
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "sdk_auth", "reason": "endpoint_changed"}
+            
+            if "text/html" in content_type:
+                # Got HTML instead of JSON = blocked/redirected
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "sdk_auth", "reason": "blocked"}
+            
+            if response.status_code == 200 and "application/json" in content_type:
                 result = response.json()
                 if result.get("nextStep") == "PASSWORD" or "password" in str(result).lower():
-                    return {"exists": True, "rate_limited": False, "domain": "uber.com", "method": "sdk_auth"}
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "sdk_auth"}
             elif response.status_code == 429:
-                return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "sdk_auth"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "sdk_auth"}
         except Exception:
             pass
         
-        return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "sdk_auth"}
+        # If we reach here, the check was inconclusive
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "sdk_auth", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "sdk_auth"}
     except Exception as e:
         logging.error(f"Uber check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "sdk_auth"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "sdk_auth", "reason": "error"}
 
 
 async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via registration check"""
+    """Check Binance via registration check - requires residential proxy to work reliably"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -420,24 +451,36 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
             timeout=15
         )
         
+        if response.status_code == 404:
+            # Endpoint has been removed/changed
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "endpoint_removed"}
+        
         if response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "binance.com", "method": "email_validate"}
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
+        
+        if response.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "blocked"}
         
         if response.status_code == 200:
             result = response.json()
             if not result.get("success", True):
                 msg = str(result.get("message", "")).lower()
                 if "registered" in msg or "exist" in msg or "already" in msg:
-                    return {"exists": True, "rate_limited": False, "domain": "binance.com", "method": "email_validate"}
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
         
-        return {"exists": False, "rate_limited": False, "domain": "binance.com", "method": "email_validate"}
+        # If we reach here with no proxy, mark as unverifiable
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "email_validate"}
     except Exception as e:
         logging.error(f"Binance check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "binance.com", "method": "email_validate"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "email_validate", "reason": "error"}
 
 
 async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via signup"""
+    """Check Coinbase via signup - requires residential proxy to work reliably"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -449,26 +492,37 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
             timeout=15
         )
         
+        if response.status_code == 404:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "endpoint_removed"}
+        
         if response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "signup_check"}
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
+        
+        if response.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "blocked"}
         
         try:
             result = response.json()
             errors = result.get("errors", [])
             for error in errors:
                 if "email" in str(error).lower() and ("taken" in str(error).lower() or "exist" in str(error).lower()):
-                    return {"exists": True, "rate_limited": False, "domain": "coinbase.com", "method": "signup_check"}
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
         except Exception:
             pass
         
-        return {"exists": False, "rate_limited": False, "domain": "coinbase.com", "method": "signup_check"}
+        # If we reach here with no proxy, mark as unverifiable
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "signup_check"}
     except Exception as e:
         logging.error(f"Coinbase check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "coinbase.com", "method": "signup_check"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "signup_check", "reason": "error"}
 
 
 async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo via login flow"""
+    """Check Deliveroo via login flow - requires residential proxy to work reliably"""
     try:
         headers = get_headers()
         headers["Content-Type"] = "application/json"
@@ -482,22 +536,33 @@ async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[
             timeout=15
         )
         
+        if response.status_code == 404:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "endpoint_removed"}
+        
         if response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "login_check"}
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
+        
+        if response.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "blocked"}
         
         if response.status_code == 401:
             try:
                 result = response.json()
                 msg = str(result).lower()
                 if "password" in msg or "credentials" in msg:
-                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
             except Exception:
                 pass
         
-        return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "login_check"}
+        # If we reach here with no proxy, mark as unverifiable
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
     except Exception as e:
         logging.error(f"Deliveroo check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "login_check"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "error"}
 
 
 # ============ PHONE NUMBER CHECKS ============
@@ -575,17 +640,32 @@ async def check_uber_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, A
             timeout=15
         )
         
-        if response.status_code == 200:
+        content_type = response.headers.get("content-type", "")
+        
+        if response.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "csrf_blocked"}
+        
+        if response.status_code == 404:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "endpoint_changed"}
+        
+        if "text/html" in content_type:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "blocked"}
+        
+        if response.status_code == 200 and "application/json" in content_type:
             result = response.json()
             if result.get("nextStep") == "OTP" or "otp" in str(result).lower():
-                return {"exists": True, "rate_limited": False, "domain": "uber.com", "method": "phone_auth"}
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
         elif response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "phone_auth"}
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
         
-        return {"exists": False, "rate_limited": False, "domain": "uber.com", "method": "phone_auth"}
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
     except Exception as e:
         logging.error(f"Uber phone check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "uber.com", "method": "phone_auth"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "error"}
 
 
 async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
@@ -603,20 +683,30 @@ async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[s
             timeout=15
         )
         
+        if response.status_code == 404:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "endpoint_removed"}
+        
+        if response.status_code == 403:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "blocked"}
+        
         if response.status_code == 200:
             try:
                 result = response.json()
                 if result.get("registered") or result.get("exists"):
-                    return {"exists": True, "rate_limited": False, "domain": "deliveroo.com", "method": "phone_check"}
+                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
             except Exception:
                 pass
         elif response.status_code == 429:
-            return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "phone_check"}
+            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
         
-        return {"exists": False, "rate_limited": False, "domain": "deliveroo.com", "method": "phone_check"}
+        has_proxy = len(proxy_manager.proxies) > 0
+        if not has_proxy:
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "no_proxy"}
+        
+        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
     except Exception as e:
         logging.error(f"Deliveroo phone check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "deliveroo.com", "method": "phone_check"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "error"}
 
 
 # ============ PLATFORM CONFIGS ============
@@ -707,31 +797,27 @@ async def check_custom_email_platform(email: str, platform_name: str, client: ht
     try:
         platform_info = CUSTOM_EMAIL_PLATFORMS.get(platform_name)
         if not platform_info:
-            return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
-        
-        # Check if platform needs proxy and we don't have one
-        needs_proxy = platform_info.get("needs_proxy", False)
-        has_proxy = len(proxy_manager.proxies) > 0
+            return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
         
         result = await platform_info["func"](email, client)
         result["platform"] = platform_name
         result["error"] = False
         
-        # Add warning if needs proxy but none configured
-        if needs_proxy and not has_proxy:
-            result["needs_proxy_warning"] = True
+        # Ensure unverifiable field exists
+        if "unverifiable" not in result:
+            result["unverifiable"] = False
         
         return result
     except Exception as e:
         logging.error(f"Error checking custom {platform_name}: {e}")
-        return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
+        return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True, "reason": "exception"}
 
 
 async def check_phone_platform(phone: str, country_code: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
     try:
         platform_info = PHONE_PLATFORMS.get(platform_name)
         if not platform_info:
-            return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
+            return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
         
         if platform_info.get("needs_country_code"):
             result = await platform_info["func"](phone, country_code, client)
@@ -741,10 +827,12 @@ async def check_phone_platform(phone: str, country_code: str, platform_name: str
         
         result["platform"] = platform_name
         result["error"] = False
+        if "unverifiable" not in result:
+            result["unverifiable"] = False
         return result
     except Exception as e:
         logging.error(f"Error checking phone {platform_name}: {e}")
-        return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
+        return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
 
 
 async def verify_email(email: str) -> VerificationResult:
@@ -752,18 +840,19 @@ async def verify_email(email: str) -> VerificationResult:
     
     # Use proxy manager to create client
     async with proxy_manager.create_client(timeout=30) as client:
+        # Run custom platform checks first (they handle their own unverifiable status)
         custom_tasks = [check_custom_email_platform(email, name, client) for name in CUSTOM_EMAIL_PLATFORMS.keys()]
-        holehe_tasks = [check_holehe_platform(email, name, client) for name in HOLEHE_MODULES.keys()]
+        custom_results = await asyncio.gather(*custom_tasks, return_exceptions=True)
         
-        all_results = await asyncio.gather(*(custom_tasks + holehe_tasks), return_exceptions=True)
-        
-        for result in all_results:
+        for result in custom_results:
             if isinstance(result, Exception):
                 continue
             
             status = "error"
             if result.get("error"):
                 status = "error"
+            elif result.get("unverifiable"):
+                status = "unverifiable"
             elif result.get("rate_limited"):
                 status = "rate_limited"
             elif result.get("exists"):
@@ -777,9 +866,43 @@ async def verify_email(email: str) -> VerificationResult:
                 domain=result.get("domain", ""),
                 method=result.get("method", "unknown")
             ))
+        
+        # Run holehe checks with small batches and delays to reduce rate limiting
+        holehe_names = list(HOLEHE_MODULES.keys())
+        batch_size = 5
+        
+        for i in range(0, len(holehe_names), batch_size):
+            batch = holehe_names[i:i + batch_size]
+            batch_tasks = [check_holehe_platform(email, name, client) for name in batch]
+            batch_results = await asyncio.gather(*batch_tasks, return_exceptions=True)
+            
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    continue
+                
+                status = "error"
+                if result.get("error"):
+                    status = "error"
+                elif result.get("rate_limited"):
+                    status = "rate_limited"
+                elif result.get("exists"):
+                    status = "found"
+                else:
+                    status = "not_found"
+                
+                platforms_results.append(PlatformResult(
+                    platform=result.get("platform", "unknown"),
+                    status=status,
+                    domain=result.get("domain", ""),
+                    method=result.get("method", "unknown")
+                ))
+            
+            # Small delay between batches to reduce rate limiting
+            if i + batch_size < len(holehe_names):
+                await asyncio.sleep(0.5)
     
-    status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
-    platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
+    status_order = {"found": 0, "not_found": 1, "unverifiable": 2, "rate_limited": 3, "error": 4}
+    platforms_results.sort(key=lambda x: status_order.get(x.status, 5))
     
     return VerificationResult(
         identifier=email,
@@ -803,6 +926,8 @@ async def verify_phone(phone: str) -> VerificationResult:
             status = "error"
             if result.get("error"):
                 status = "error"
+            elif result.get("unverifiable"):
+                status = "unverifiable"
             elif result.get("rate_limited"):
                 status = "rate_limited"
             elif result.get("exists"):
@@ -817,8 +942,8 @@ async def verify_phone(phone: str) -> VerificationResult:
                 method=result.get("method", "phone")
             ))
     
-    status_order = {"found": 0, "not_found": 1, "rate_limited": 2, "error": 3}
-    platforms_results.sort(key=lambda x: status_order.get(x.status, 4))
+    status_order = {"found": 0, "not_found": 1, "unverifiable": 2, "rate_limited": 3, "error": 4}
+    platforms_results.sort(key=lambda x: status_order.get(x.status, 5))
     
     return VerificationResult(
         identifier=phone,
@@ -903,7 +1028,9 @@ async def health_check():
         "phone_platforms": ALL_PHONE_PLATFORMS,
         "total_platforms": len(ALL_EMAIL_PLATFORMS) + len(ALL_PHONE_PLATFORMS),
         "proxies_count": len(proxy_manager.proxies),
-        "mode": "real_verification"
+        "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
+        "mode": "real_verification",
+        "custom_platforms_need_proxy": list(CUSTOM_EMAIL_PLATFORMS.keys())
     }
 
 
