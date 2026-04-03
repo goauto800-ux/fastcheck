@@ -86,7 +86,7 @@ export default function Header() {
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
                 <Cpu className="w-3.5 h-3.5 text-blue-400" />
                 <span className="text-xs font-mono text-blue-400">
-                  {threadInfo.max_concurrent_identifiers} threads
+                  {threadInfo.max_concurrent_identifiers}x identifiants
                 </span>
               </div>
               <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/10 border border-purple-500/20">
@@ -95,6 +95,11 @@ export default function Header() {
                 </svg>
                 <span className="text-xs font-mono text-purple-400">
                   {threadInfo.max_concurrent_platforms} checks//{threadInfo.active_proxies > 0 ? ` • ${threadInfo.active_proxies} proxies` : ""}
+                </span>
+              </div>
+              <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg ${threadInfo.mode === 'auto' ? 'bg-cyan-500/10 border border-cyan-500/20' : 'bg-amber-500/10 border border-amber-500/20'}`}>
+                <span className={`text-xs font-mono ${threadInfo.mode === 'auto' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                  {threadInfo.mode === 'auto' ? '⚙ Auto' : '✋ Manuel'}
                 </span>
               </div>
             </div>

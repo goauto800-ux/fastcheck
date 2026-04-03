@@ -20,37 +20,74 @@ import multiprocessing
 
 # Auto-threading configuration
 class ThreadConfig:
-    """Auto-detects and manages optimal concurrency settings"""
+    """Auto-detects and manages optimal concurrency settings based on workload"""
     
     def __init__(self):
-        self._max_concurrent_identifiers = 10  # Process up to 10 identifiers at once
-        self._max_concurrent_platforms = 50    # Run ALL platforms at once for speed
         self._cpu_count = multiprocessing.cpu_count()
+        self._override_identifiers = None
+        self._override_platforms = None
+    
+    @property
+    def active_proxy_count(self) -> int:
+        if proxy_manager and proxy_manager.proxies:
+            return len([p for p in proxy_manager.proxies if p["status"] == "active"])
+        return 0
     
     @property
     def max_concurrent_identifiers(self) -> int:
-        """Always use max parallelism"""
-        return 15
+        if self._override_identifiers:
+            return self._override_identifiers
+        # Adapt based on CPU and proxies
+        base = min(self._cpu_count * 2, 10)
+        if self.active_proxy_count > 0:
+            # With proxies, we can be more aggressive
+            base = min(base + self.active_proxy_count * 2, 20)
+        return max(3, base)
     
     @property
     def max_concurrent_platforms(self) -> int:
-        """Always run all platforms in parallel"""
-        return 50
+        if self._override_platforms:
+            return self._override_platforms
+        # Without proxies, custom platform checks fail anyway so fewer concurrent
+        if self.active_proxy_count == 0:
+            return 30
+        # With proxies, go faster
+        return min(30 + self.active_proxy_count * 10, 80)
+    
+    def recommended_batch_size(self, total_identifiers: int) -> int:
+        """Return optimal batch size for frontend based on total workload"""
+        proxies = self.active_proxy_count
+        
+        if total_identifiers <= 5:
+            return total_identifiers  # Small batch, send all at once
+        elif total_identifiers <= 20:
+            return 5
+        elif total_identifiers <= 50:
+            return 8 if proxies > 0 else 5
+        elif total_identifiers <= 200:
+            return 10 if proxies > 0 else 8
+        else:
+            # Large workloads
+            return 15 if proxies > 0 else 10
     
     def set_max_identifiers(self, count: int):
-        self._max_concurrent_identifiers = max(1, min(20, count))
+        self._override_identifiers = max(1, min(30, count))
     
     def set_max_platforms(self, count: int):
-        self._max_concurrent_platforms = max(5, min(50, count))
+        self._override_platforms = max(5, min(80, count))
+    
+    def reset(self):
+        self._override_identifiers = None
+        self._override_platforms = None
     
     def get_info(self) -> dict:
-        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
         return {
             "max_concurrent_identifiers": self.max_concurrent_identifiers,
             "max_concurrent_platforms": self.max_concurrent_platforms,
             "cpu_count": self._cpu_count,
-            "active_proxies": proxy_count,
-            "mode": "turbo",
+            "active_proxies": self.active_proxy_count,
+            "recommended_batch_size": self.recommended_batch_size(50),
+            "mode": "auto" if not self._override_identifiers else "manual",
         }
 
 
@@ -1251,13 +1288,19 @@ async def health_check():
     }
 
 @api_router.get("/config/threads")
-async def get_thread_config():
-    """Get auto-threading configuration"""
-    return thread_config.get_info()
+async def get_thread_config(total: Optional[int] = None):
+    """Get auto-threading configuration with recommended batch size"""
+    info = thread_config.get_info()
+    if total is not None and total > 0:
+        info["recommended_batch_size"] = thread_config.recommended_batch_size(total)
+    return info
 
 @api_router.post("/config/threads")
-async def set_thread_config(max_identifiers: Optional[int] = None, max_platforms: Optional[int] = None):
+async def set_thread_config(max_identifiers: Optional[int] = None, max_platforms: Optional[int] = None, reset: Optional[bool] = None):
     """Manually override auto-threading settings"""
+    if reset:
+        thread_config.reset()
+        return thread_config.get_info()
     if max_identifiers is not None:
         thread_config.set_max_identifiers(max_identifiers)
     if max_platforms is not None:

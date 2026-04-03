@@ -52,13 +52,21 @@ export default function HomePage() {
     setTotalToVerify(identifiers.length);
     setResults([]);
 
-    const BATCH_SIZE = 5;
-    const totalBatches = Math.ceil(identifiers.length / BATCH_SIZE);
+    // Get recommended batch size from backend
+    let batchSize = 5;
+    try {
+      const threadResp = await axios.get(`${API}/config/threads?total=${identifiers.length}`);
+      batchSize = threadResp.data.recommended_batch_size || 5;
+    } catch {
+      // fallback to 5
+    }
+
+    const totalBatches = Math.ceil(identifiers.length / batchSize);
     let completedCount = 0;
 
     try {
       for (let i = 0; i < totalBatches; i++) {
-        const batch = identifiers.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+        const batch = identifiers.slice(i * batchSize, (i + 1) * batchSize);
         
         const requestData = { identifiers: batch };
         if (selectedPlatforms.length > 0) {
