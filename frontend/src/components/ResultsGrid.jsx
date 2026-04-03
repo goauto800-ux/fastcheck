@@ -1,35 +1,77 @@
 import { motion, AnimatePresence } from "framer-motion";
-import { Mail, Phone, CheckCircle, XCircle, Loader2, Search } from "lucide-react";
-import { FaUber, FaAmazon } from "react-icons/fa";
-import { SiNetflix, SiBinance, SiCoinbase } from "react-icons/si";
+import { 
+  Mail, Phone, CheckCircle, XCircle, Loader2, Search, AlertCircle, 
+  Globe, ShoppingCart, Music, Camera, MessageCircle, Code, 
+  Briefcase, Car, Coffee, Calendar, Dumbbell
+} from "lucide-react";
 
+// Simple platform config with colors only - using Lucide icons as fallbacks
 const PLATFORM_CONFIG = {
-  uber_eats: {
-    name: "Uber Eats",
-    icon: FaUber,
-    color: "#06C167",
-  },
-  amazon: {
-    name: "Amazon",
-    icon: FaAmazon,
-    color: "#FF9900",
-  },
-  netflix: {
-    name: "Netflix",
-    icon: SiNetflix,
-    color: "#E50914",
-  },
-  binance: {
-    name: "Binance",
-    icon: SiBinance,
-    color: "#F0B90B",
-  },
-  coinbase: {
-    name: "Coinbase",
-    icon: SiCoinbase,
-    color: "#0052FF",
-  },
+  // Shopping & Food
+  amazon: { name: "Amazon", color: "#FF9900", category: "shopping" },
+  deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food" },
+  ebay: { name: "eBay", color: "#E53238", category: "shopping" },
+  nike: { name: "Nike", color: "#FFFFFF", category: "shopping" },
+  
+  // Social Media
+  discord: { name: "Discord", color: "#5865F2", category: "social" },
+  instagram: { name: "Instagram", color: "#E4405F", category: "social" },
+  twitter: { name: "Twitter/X", color: "#1DA1F2", category: "social" },
+  pinterest: { name: "Pinterest", color: "#BD081C", category: "social" },
+  snapchat: { name: "Snapchat", color: "#FFFC00", category: "social" },
+  tumblr: { name: "Tumblr", color: "#36465D", category: "social" },
+  imgur: { name: "Imgur", color: "#1BB76E", category: "social" },
+  patreon: { name: "Patreon", color: "#FF424D", category: "social" },
+  strava: { name: "Strava", color: "#FC4C02", category: "sport" },
+  quora: { name: "Quora", color: "#B92B27", category: "social" },
+  
+  // Music & Streaming
+  spotify: { name: "Spotify", color: "#1DB954", category: "music" },
+  soundcloud: { name: "SoundCloud", color: "#FF5500", category: "music" },
+  
+  // Tech & Dev
+  github: { name: "GitHub", color: "#FFFFFF", category: "dev" },
+  docker: { name: "Docker", color: "#2496ED", category: "dev" },
+  codecademy: { name: "Codecademy", color: "#1F4056", category: "dev" },
+  
+  // Email providers
+  google: { name: "Google", color: "#4285F4", category: "email" },
+  yahoo: { name: "Yahoo", color: "#6001D2", category: "email" },
+  protonmail: { name: "ProtonMail", color: "#8B89CC", category: "email" },
+  
+  // Software
+  adobe: { name: "Adobe", color: "#FF0000", category: "software" },
+  office365: { name: "Office 365", color: "#D83B01", category: "software" },
+  lastpass: { name: "LastPass", color: "#D32D27", category: "software" },
+  firefox: { name: "Firefox", color: "#FF7139", category: "software" },
+  
+  // Payment
+  venmo: { name: "Venmo", color: "#3D95CE", category: "payment" },
+  
+  // Other
+  wordpress: { name: "WordPress", color: "#21759B", category: "software" },
+  blablacar: { name: "BlaBlaCar", color: "#00AAFF", category: "transport" },
+  buymeacoffee: { name: "Buy Me Coffee", color: "#FFDD00", category: "crowdfunding" },
+  eventbrite: { name: "Eventbrite", color: "#F05537", category: "events" },
 };
+
+// Get icon based on category
+function getCategoryIcon(category) {
+  switch (category) {
+    case "shopping": return ShoppingCart;
+    case "food": return ShoppingCart;
+    case "social": return MessageCircle;
+    case "music": return Music;
+    case "dev": return Code;
+    case "email": return Mail;
+    case "software": return Briefcase;
+    case "transport": return Car;
+    case "crowdfunding": return Coffee;
+    case "events": return Calendar;
+    case "sport": return Dumbbell;
+    default: return Globe;
+  }
+}
 
 function StatusBadge({ status }) {
   if (status === "pending") {
@@ -50,6 +92,33 @@ function StatusBadge({ status }) {
     );
   }
 
+  if (status === "rate_limited") {
+    return (
+      <div className="flex items-center gap-1.5 text-orange-400">
+        <AlertCircle className="w-3.5 h-3.5" />
+        <span className="text-xs font-mono">Limité</span>
+      </div>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <div className="flex items-center gap-1.5 text-orange-400">
+        <AlertCircle className="w-3.5 h-3.5" />
+        <span className="text-xs font-mono">Erreur</span>
+      </div>
+    );
+  }
+
+  if (status === "not_supported") {
+    return (
+      <div className="flex items-center gap-1.5 text-slate-500">
+        <XCircle className="w-3.5 h-3.5" />
+        <span className="text-xs font-mono">Non supporté</span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-1.5 text-rose-400">
       <XCircle className="w-3.5 h-3.5" />
@@ -61,6 +130,7 @@ function StatusBadge({ status }) {
 function ResultCard({ result, index }) {
   const isEmail = result.identifier_type === "email";
   const foundCount = result.platforms.filter((p) => p.status === "found").length;
+  const totalCount = result.platforms.length;
 
   return (
     <motion.div
@@ -88,16 +158,16 @@ function ResultCard({ result, index }) {
               {result.identifier}
             </p>
             <p className="text-slate-500 text-xs font-mono mt-0.5">
-              {isEmail ? "Email" : "Téléphone"} • {foundCount}/5 trouvé(s)
+              {isEmail ? "Email" : "Téléphone"} • {foundCount}/{totalCount} trouvé(s)
             </p>
           </div>
         </div>
 
-        {/* Platform Results */}
-        <div className="relative space-y-0">
+        {/* Platform Results - scrollable if many */}
+        <div className="relative space-y-0 max-h-[400px] overflow-y-auto custom-scrollbar">
           {result.platforms.map((platform, idx) => {
             const config = PLATFORM_CONFIG[platform.platform];
-            const Icon = config?.icon;
+            const Icon = getCategoryIcon(config?.category);
             
             return (
               <div
@@ -108,12 +178,10 @@ function ResultCard({ result, index }) {
                 data-testid={`platform-${platform.platform}-${platform.status}`}
               >
                 <div className="flex items-center gap-2.5">
-                  {Icon && (
-                    <Icon 
-                      className="w-4 h-4" 
-                      style={{ color: config.color }}
-                    />
-                  )}
+                  <Icon 
+                    className="w-4 h-4" 
+                    style={{ color: config?.color || "#94A3B8" }}
+                  />
                   <span className="text-sm font-mono text-slate-300">
                     {config?.name || platform.platform}
                   </span>
@@ -141,7 +209,7 @@ export default function ResultsGrid({ results, isLoading }) {
           <Search className="w-10 h-10 text-slate-600" />
         </div>
         <p className="text-slate-500 font-mono text-sm">
-          Aucun résultat. Uploadez un fichier ou collez vos données pour commencer.
+          Aucun résultat. Entrez des emails pour vérifier sur 30+ plateformes.
         </p>
       </motion.div>
     );

@@ -142,6 +142,10 @@ export default function HomePage() {
       (acc, r) => acc + r.platforms.filter((p) => p.status === "not_found").length,
       0
     ),
+    rateLimited: results.reduce(
+      (acc, r) => acc + r.platforms.filter((p) => p.status === "rate_limited" || p.status === "error").length,
+      0
+    ),
   };
 
   return (
@@ -171,8 +175,8 @@ export default function HomePage() {
               <span className="text-white">Rapide</span>
             </h1>
             <p className="text-slate-400 text-sm sm:text-base max-w-2xl mx-auto font-mono">
-              Vérifiez si des emails ou numéros sont associés à des comptes sur
-              Uber Eats, Amazon, Netflix, Binance et Coinbase
+              Vérifiez si des emails sont associés à des comptes sur
+              30+ plateformes incluant Amazon, Twitter, Spotify, Discord et plus
             </p>
           </motion.div>
 
