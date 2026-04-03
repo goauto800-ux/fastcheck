@@ -21,6 +21,7 @@ export default function HomePage() {
   const [isVerifying, setIsVerifying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [totalToVerify, setTotalToVerify] = useState(0);
+  const [verifiedCount, setVerifiedCount] = useState(0);
   const [proxyCount, setProxyCount] = useState(0);
   const [selectedPlatforms, setSelectedPlatforms] = useState([]);
   const [filePreviewData, setFilePreviewData] = useState(null);
@@ -47,33 +48,42 @@ export default function HomePage() {
 
     setIsVerifying(true);
     setProgress(0);
+    setVerifiedCount(0);
     setTotalToVerify(identifiers.length);
     setResults([]);
 
+    const BATCH_SIZE = 5;
+    const totalBatches = Math.ceil(identifiers.length / BATCH_SIZE);
+    let completedCount = 0;
+
     try {
-      const requestData = {
-        identifiers: identifiers,
-      };
-      
-      // Add platform filter if specific platforms selected
-      if (selectedPlatforms.length > 0) {
-        requestData.platforms = selectedPlatforms;
-      }
-      
-      const response = await axios.post(`${API}/verify`, requestData);
+      for (let i = 0; i < totalBatches; i++) {
+        const batch = identifiers.slice(i * BATCH_SIZE, (i + 1) * BATCH_SIZE);
+        
+        const requestData = { identifiers: batch };
+        if (selectedPlatforms.length > 0) {
+          requestData.platforms = selectedPlatforms;
+        }
 
-      // Simulate streaming effect
-      const allResults = response.data.results;
-      for (let i = 0; i < allResults.length; i++) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-        setResults((prev) => [...prev, allResults[i]]);
-        setProgress(((i + 1) / allResults.length) * 100);
+        const response = await axios.post(`${API}/verify`, requestData);
+        const batchResults = response.data.results;
+
+        // Add results immediately as they arrive
+        setResults((prev) => [...prev, ...batchResults]);
+        
+        completedCount += batch.length;
+        setVerifiedCount(completedCount);
+        setProgress((completedCount / identifiers.length) * 100);
       }
 
-      toast.success(`${allResults.length} vérification(s) terminée(s)`);
+      toast.success(`${identifiers.length} vérification(s) terminée(s)`);
     } catch (error) {
       console.error("Verification error:", error);
-      toast.error("Erreur lors de la vérification");
+      if (completedCount > 0) {
+        toast.warning(`${completedCount}/${identifiers.length} vérifiés — erreur sur le reste`);
+      } else {
+        toast.error("Erreur lors de la vérification");
+      }
     } finally {
       setIsVerifying(false);
       setProgress(100);
@@ -234,6 +244,7 @@ export default function HomePage() {
     setResults([]);
     setProgress(0);
     setTotalToVerify(0);
+    setVerifiedCount(0);
     toast.info("Résultats effacés");
   }, []);
 
@@ -354,16 +365,19 @@ export default function HomePage() {
                     <Zap className="w-4 h-4 text-yellow-400 animate-pulse" />
                     Vérification en cours...
                   </span>
-                  <span className="text-sm text-slate-400 font-mono">
-                    {Math.round(progress)}%
+                  <span className="text-sm font-mono">
+                    <span className="text-blue-400">{verifiedCount}</span>
+                    <span className="text-slate-600">/</span>
+                    <span className="text-slate-400">{totalToVerify}</span>
+                    <span className="text-slate-600 ml-2">({Math.round(progress)}%)</span>
                   </span>
                 </div>
-                <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                <div className="h-2.5 bg-white/5 rounded-full overflow-hidden">
                   <motion.div
                     className="h-full progress-bar rounded-full"
                     initial={{ width: 0 }}
                     animate={{ width: `${progress}%` }}
-                    transition={{ duration: 0.3 }}
+                    transition={{ duration: 0.5 }}
                   />
                 </div>
               </motion.div>
