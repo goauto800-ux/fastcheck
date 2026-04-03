@@ -23,33 +23,25 @@ class ThreadConfig:
     """Auto-detects and manages optimal concurrency settings"""
     
     def __init__(self):
-        self._max_concurrent_identifiers = 5  # Process up to 5 identifiers at once
-        self._max_concurrent_platforms = 20   # Run up to 20 platform checks at once
+        self._max_concurrent_identifiers = 10  # Process up to 10 identifiers at once
+        self._max_concurrent_platforms = 50    # Run ALL platforms at once for speed
         self._cpu_count = multiprocessing.cpu_count()
     
     @property
     def max_concurrent_identifiers(self) -> int:
-        """Auto-adjust based on proxy count"""
-        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
-        if proxy_count > 20:
-            return min(10, self._max_concurrent_identifiers * 2)
-        elif proxy_count > 5:
-            return min(7, self._max_concurrent_identifiers + 2)
-        return self._max_concurrent_identifiers
+        """Always use max parallelism"""
+        return 15
     
     @property
     def max_concurrent_platforms(self) -> int:
-        """Auto-adjust: with proxies run more in parallel"""
-        proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
-        if proxy_count > 10:
-            return 35  # All platforms at once
-        return self._max_concurrent_platforms
+        """Always run all platforms in parallel"""
+        return 50
     
     def set_max_identifiers(self, count: int):
         self._max_concurrent_identifiers = max(1, min(20, count))
     
     def set_max_platforms(self, count: int):
-        self._max_concurrent_platforms = max(5, min(40, count))
+        self._max_concurrent_platforms = max(5, min(50, count))
     
     def get_info(self) -> dict:
         proxy_count = len([p for p in proxy_manager.proxies if p["status"] == "active"]) if proxy_manager else 0
@@ -58,7 +50,7 @@ class ThreadConfig:
             "max_concurrent_platforms": self.max_concurrent_platforms,
             "cpu_count": self._cpu_count,
             "active_proxies": proxy_count,
-            "mode": "auto",
+            "mode": "turbo",
         }
 
 
@@ -404,107 +396,91 @@ def _get_proxy_for_curl_cffi() -> Optional[Dict[str, str]]:
 
 
 async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via forgot password API - more reliable than login"""
+    """Check Netflix via forgot password API"""
     import codecs
     
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     
     if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "no_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": "no_proxy"}
     
     proxy_info = _get_proxy_for_curl_cffi()
     if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "no_active_proxy"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": "no_active_proxy"}
     
     try:
         from curl_cffi.requests import AsyncSession
+        import re
         
-        # Use longer timeout for slow proxies
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
-            # Method 1: Try forgot password page - more reliable
-            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=30)
+        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=20) as session:
+            # Get LoginHelp page
+            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=10)
             
             if resp.status_code == 403:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password", "reason": "ip_blocked"}
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             if resp.status_code != 200:
                 proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api"}
             
-            # Extract authURL from page
-            import re
+            # Extract authURL
             auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
-            auth_url = ""
-            if auth_match:
-                auth_url = codecs.decode(auth_match.group(1), 'unicode_escape')
+            auth_url = codecs.decode(auth_match.group(1), 'unicode_escape') if auth_match else ""
             
-            # Submit forgot password form
-            payload = {
-                'email': email,
-                'action': 'loginHelpAction',
-                'authURL': auth_url,
-                'flow': 'loginHelp',
-            }
-            
+            # Submit forgot password
             resp2 = await session.post(
                 "https://www.netflix.com/LoginHelp",
-                data=payload,
+                data={
+                    'email': email,
+                    'action': 'loginHelpAction',
+                    'authURL': auth_url,
+                    'flow': 'loginHelp',
+                },
                 headers={
                     'Content-Type': 'application/x-www-form-urlencoded',
                     'Referer': 'https://www.netflix.com/LoginHelp',
                     'Origin': 'https://www.netflix.com',
                 },
-                timeout=30
+                timeout=10,
+                allow_redirects=True
             )
             
-            text_lower = resp2.text.lower()
             final_url = str(resp2.url).lower()
+            text_lower = resp2.text.lower()
             
-            # Check signals
-            # "We've sent an email" = account EXISTS
-            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email', 'envoyé un e-mail', 'envoyé un email', 'vérifie ta boîte']):
+            # /NotFound = email doesn't exist
+            if '/notfound' in final_url:
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            # Redirect to sent page = EXISTS
+            # /LoginHelpConfirm = email sent = EXISTS
             if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            # "Cannot find account" = NOT EXISTS
-            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "no account", "not found", "aucun compte"]):
+            # Check text signals
+            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email']):
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            # Rate limit
-            if any(kw in text_lower for kw in ['too many', 'trop de tentatives', 'rate limit', 'try again later']):
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas"]):
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            # CAPTCHA/block
-            if 'something went wrong' in text_lower or 'recaptcha' in text_lower:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "captcha_or_block"}
-            
-            # If we're still on LoginHelp with an error, likely not found
+            # Still on LoginHelp = not found
             if '/loginhelp' in final_url:
                 proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "forgot_password"}
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
     
-    except asyncio.TimeoutError:
-        logging.error(f"Netflix check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "timeout"}
     except Exception as e:
-        logging.error(f"Netflix check error: {e}")
+        logging.error(f"Netflix error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "forgot_password", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api"}
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:

@@ -4,8 +4,9 @@ import {
   Globe, ShoppingCart, Music, Camera, MessageCircle, Code, 
   Briefcase, Car, Coffee, Calendar, Dumbbell
 } from "lucide-react";
+import { platformLogos, getPlatformColor } from "./PlatformLogos";
 
-// Simple platform config with colors only - using Lucide icons as fallbacks
+// Simple platform config with colors only
 const PLATFORM_CONFIG = {
   // Priority platforms (custom) - Need residential proxies!
   netflix: { name: "Netflix", color: "#E50914", category: "streaming", needsProxy: true },
@@ -22,7 +23,7 @@ const PLATFORM_CONFIG = {
   // Social Media (holehe - works without proxy)
   discord: { name: "Discord", color: "#5865F2", category: "social" },
   instagram: { name: "Instagram", color: "#E4405F", category: "social" },
-  twitter: { name: "Twitter/X", color: "#1DA1F2", category: "social" },
+  twitter: { name: "Twitter/X", color: "#000000", category: "social" },
   pinterest: { name: "Pinterest", color: "#BD081C", category: "social" },
   snapchat: { name: "Snapchat", color: "#FFFC00", category: "social" },
   tumblr: { name: "Tumblr", color: "#36465D", category: "social" },
@@ -43,7 +44,7 @@ const PLATFORM_CONFIG = {
   // Email providers (holehe)
   google: { name: "Google", color: "#4285F4", category: "email" },
   yahoo: { name: "Yahoo", color: "#6001D2", category: "email" },
-  protonmail: { name: "ProtonMail", color: "#8B89CC", category: "email" },
+  protonmail: { name: "ProtonMail", color: "#6D4AFF", category: "email" },
   
   // Software (holehe)
   adobe: { name: "Adobe", color: "#FF0000", category: "software" },
@@ -80,6 +81,38 @@ function getCategoryIcon(category) {
     case "payment": return Globe;
     default: return Globe;
   }
+}
+
+// Platform logo component with glow
+function PlatformIcon({ platform, config }) {
+  const logo = platformLogos[platform];
+  const color = config?.color || getPlatformColor(platform);
+  
+  if (logo) {
+    return (
+      <div 
+        className="w-5 h-5 flex items-center justify-center"
+        style={{ 
+          color: color,
+          filter: `drop-shadow(0 0 6px ${color}80)`
+        }}
+      >
+        {logo}
+      </div>
+    );
+  }
+  
+  // Fallback to category icon
+  const Icon = getCategoryIcon(config?.category);
+  return (
+    <Icon 
+      className="w-4 h-4" 
+      style={{ 
+        color: color,
+        filter: `drop-shadow(0 0 4px ${color}60)`
+      }}
+    />
+  );
 }
 
 function StatusBadge({ status }) {
@@ -190,7 +223,6 @@ function ResultCard({ result, index }) {
         <div className="relative space-y-0 max-h-[400px] overflow-y-auto custom-scrollbar">
           {result.platforms.map((platform, idx) => {
             const config = PLATFORM_CONFIG[platform.platform];
-            const Icon = getCategoryIcon(config?.category);
             
             return (
               <div
@@ -201,10 +233,7 @@ function ResultCard({ result, index }) {
                 data-testid={`platform-${platform.platform}-${platform.status}`}
               >
                 <div className="flex items-center gap-2.5">
-                  <Icon 
-                    className="w-4 h-4" 
-                    style={{ color: config?.color || "#94A3B8" }}
-                  />
+                  <PlatformIcon platform={platform.platform} config={config} />
                   <span className="text-sm font-mono text-slate-300">
                     {config?.name || platform.platform}
                   </span>
