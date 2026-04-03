@@ -1367,7 +1367,7 @@ async def verify_identifiers_route(request: VerificationRequest):
     if not request.identifiers:
         raise HTTPException(status_code=400, detail="No identifiers provided")
     
-    identifiers = request.identifiers[:50]  # Raised limit with auto-threading
+    identifiers = request.identifiers  # No limit
     platforms_filter = request.platforms  # Optional platform filter
     
     # Auto-thread: process multiple identifiers concurrently
@@ -1464,7 +1464,7 @@ async def verify_file(file: UploadFile = File(...)):
     if not identifiers:
         raise HTTPException(status_code=400, detail="No valid emails or phone numbers found")
     
-    identifiers = identifiers[:50]  # Raised limit with auto-threading
+    identifiers = identifiers  # No limit
     
     # Auto-thread: process multiple identifiers concurrently
     sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
