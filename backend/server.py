@@ -1529,10 +1529,15 @@ async def process_job_batch(job_id: str, identifiers: List[str], batch_start: in
                 }
                 job_manager.write_result(job_id, result_dict)
                 
-                # If any platform found, write to CSV and TXT
+                # Write to CSV if any platform found
                 platforms_found = [p.platform for p in result.platforms if p.status == "found"]
                 if platforms_found:
                     job_manager.write_csv_result(job_id, result.identifier, result.identifier_type, platforms_found)
+                
+                # Write to TXT if identifier has valid checks (found or not_found)
+                # Exclude unverifiable, rate_limited, and errors
+                valid_checks = [p for p in result.platforms if p.status in ["found", "not_found"]]
+                if valid_checks:
                     job_manager.write_txt_result(job_id, result.identifier)
                 
                 return result
