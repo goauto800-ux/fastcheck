@@ -30,10 +30,19 @@ export default function PlatformSelector({ selectedPlatforms, onSelectionChange,
   const [platforms, setPlatforms] = useState({ email: [], phone: [] });
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [initialized, setInitialized] = useState(false);
 
   useEffect(() => {
     axios.get(`${API}/platforms`).then(r => setPlatforms(r.data.platforms)).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  // Set Amazon as default on first load
+  useEffect(() => {
+    if (!initialized && !loading && selectedPlatforms.length === 0) {
+      onSelectionChange(['amazon']);
+      setInitialized(true);
+    }
+  }, [loading, initialized, selectedPlatforms, onSelectionChange]);
 
   const isAll = selectedPlatforms.length === 0;
   const toggle = (name) => {
