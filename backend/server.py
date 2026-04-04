@@ -1,4 +1,5 @@
-from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException
+from fastapi import FastAPI, APIRouter, UploadFile, File, HTTPException, BackgroundTasks
+from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -16,6 +17,8 @@ import csv
 import io
 import httpx
 import multiprocessing
+import json
+import gc
 
 
 # Auto-threading configuration — MAXIMUM SPEED
@@ -356,6 +359,95 @@ class ProxyManager:
 
 # Global proxy manager
 proxy_manager = ProxyManager()
+
+# ============ BACKGROUND JOB SYSTEM ============
+
+class JobManager:
+    """Manages background verification jobs for massive file processing"""
+    
+    def __init__(self):
+        self.jobs: Dict[str, Dict[str, Any]] = {}
+        self.results_dir = Path("/tmp/fast_jobs")
+        self.results_dir.mkdir(exist_ok=True)
+    
+    def create_job(self, total_identifiers: int, filename: str = "") -> str:
+        job_id = str(uuid.uuid4())
+        self.jobs[job_id] = {
+            "id": job_id,
+            "status": "pending",
+            "total": total_identifiers,
+            "processed": 0,
+            "found": 0,
+            "not_found": 0,
+            "unverifiable": 0,
+            "errors": 0,
+            "filename": filename,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "completed_at": None,
+            "results_file": str(self.results_dir / f"{job_id}.jsonl"),
+            "csv_file": str(self.results_dir / f"{job_id}.csv"),
+            "txt_file": str(self.results_dir / f"{job_id}_valid.txt"),
+        }
+        return job_id
+    
+    def get_job(self, job_id: str) -> Optional[Dict[str, Any]]:
+        return self.jobs.get(job_id)
+    
+    def update_job(self, job_id: str, **kwargs):
+        if job_id in self.jobs:
+            self.jobs[job_id].update(kwargs)
+    
+    def increment_processed(self, job_id: str, found: int = 0, not_found: int = 0, unverifiable: int = 0, errors: int = 0):
+        if job_id in self.jobs:
+            self.jobs[job_id]["processed"] += 1
+            self.jobs[job_id]["found"] += found
+            self.jobs[job_id]["not_found"] += not_found
+            self.jobs[job_id]["unverifiable"] += unverifiable
+            self.jobs[job_id]["errors"] += errors
+    
+    def write_result(self, job_id: str, result: Dict[str, Any]):
+        """Write a single result to the job's results file (JSONL format)"""
+        job = self.jobs.get(job_id)
+        if job:
+            with open(job["results_file"], "a", encoding="utf-8") as f:
+                f.write(json.dumps(result, ensure_ascii=False) + "\n")
+    
+    def write_csv_result(self, job_id: str, identifier: str, id_type: str, platforms_found: List[str]):
+        """Write a result to CSV file"""
+        job = self.jobs.get(job_id)
+        if job and platforms_found:
+            with open(job["csv_file"], "a", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([identifier, id_type, ", ".join(platforms_found)])
+    
+    def write_txt_result(self, job_id: str, identifier: str):
+        """Write valid identifier to TXT file"""
+        job = self.jobs.get(job_id)
+        if job:
+            with open(job["txt_file"], "a", encoding="utf-8") as f:
+                f.write(identifier + "\n")
+    
+    def init_csv(self, job_id: str):
+        """Initialize CSV file with headers"""
+        job = self.jobs.get(job_id)
+        if job:
+            with open(job["csv_file"], "w", encoding="utf-8", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Identifiant", "Type", "Plateformes"])
+    
+    def cleanup_job(self, job_id: str):
+        """Remove job files after download"""
+        job = self.jobs.get(job_id)
+        if job:
+            for key in ["results_file", "csv_file", "txt_file"]:
+                try:
+                    Path(job[key]).unlink(missing_ok=True)
+                except:
+                    pass
+
+# Global job manager
+job_manager = JobManager()
 
 
 # User agents
@@ -1385,6 +1477,262 @@ async def test_proxies():
             proxy_manager.mark_failure(proxy["id"])
     
     return {"results": results}
+
+
+# ============ BACKGROUND JOB ROUTES ============
+
+async def process_job_batch(job_id: str, identifiers: List[str], batch_start: int, platforms_filter: Optional[List[str]] = None):
+    """Process a batch of identifiers for a job"""
+    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
+    
+    async def verify_single(identifier: str):
+        try:
+            result = await verify_identifier(identifier, platforms_filter)
+            if result:
+                # Count stats
+                found_count = sum(1 for p in result.platforms if p.status == "found")
+                not_found_count = sum(1 for p in result.platforms if p.status == "not_found")
+                unverifiable_count = sum(1 for p in result.platforms if p.status == "unverifiable")
+                error_count = sum(1 for p in result.platforms if p.status in ["error", "rate_limited"])
+                
+                # Update job stats
+                job_manager.increment_processed(
+                    job_id, 
+                    found=found_count, 
+                    not_found=not_found_count, 
+                    unverifiable=unverifiable_count, 
+                    errors=error_count
+                )
+                
+                # Write result to file
+                result_dict = {
+                    "identifier": result.identifier,
+                    "identifier_type": result.identifier_type,
+                    "platforms": [{"platform": p.platform, "status": p.status, "domain": p.domain, "method": p.method} for p in result.platforms]
+                }
+                job_manager.write_result(job_id, result_dict)
+                
+                # If any platform found, write to CSV and TXT
+                platforms_found = [p.platform for p in result.platforms if p.status == "found"]
+                if platforms_found:
+                    job_manager.write_csv_result(job_id, result.identifier, result.identifier_type, platforms_found)
+                    job_manager.write_txt_result(job_id, result.identifier)
+                
+                return result
+        except Exception as e:
+            logging.error(f"Job {job_id} error verifying {identifier}: {e}")
+            job_manager.increment_processed(job_id, errors=1)
+        return None
+    
+    # Process batch with concurrency control
+    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
+    batch_sem = asyncio.Semaphore(concurrency)
+    
+    async def verify_with_sem(ident):
+        async with batch_sem:
+            return await verify_single(ident)
+    
+    tasks = [verify_with_sem(ident) for ident in identifiers]
+    await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Force garbage collection after each batch
+    gc.collect()
+
+
+async def run_verification_job(job_id: str, identifiers: List[str], platforms_filter: Optional[List[str]] = None):
+    """Run a complete verification job in background"""
+    try:
+        job_manager.update_job(job_id, status="running", started_at=datetime.now(timezone.utc).isoformat())
+        job_manager.init_csv(job_id)
+        
+        # Process in batches to avoid memory issues
+        # For massive files, use smaller batches to prevent memory buildup
+        total = len(identifiers)
+        if total > 100000:
+            batch_size = 500  # Smaller batches for 100k+
+        elif total > 10000:
+            batch_size = 1000  # Medium batches for 10k-100k
+        else:
+            batch_size = 2000  # Larger batches for smaller files
+        
+        for i in range(0, total, batch_size):
+            batch = identifiers[i:i+batch_size]
+            await process_job_batch(job_id, batch, i, platforms_filter)
+            
+            # Log progress every batch
+            job = job_manager.get_job(job_id)
+            if job:
+                progress = (job["processed"] / total) * 100
+                logging.info(f"Job {job_id}: {job['processed']}/{total} ({progress:.1f}%)")
+            
+            # Small delay between batches to prevent overwhelming
+            await asyncio.sleep(0.1)
+        
+        job_manager.update_job(job_id, status="completed", completed_at=datetime.now(timezone.utc).isoformat())
+        logging.info(f"Job {job_id} completed: {total} identifiers processed")
+        
+    except Exception as e:
+        logging.error(f"Job {job_id} failed: {e}")
+        job_manager.update_job(job_id, status="failed", error=str(e))
+
+
+@api_router.post("/jobs/create")
+async def create_job(file: UploadFile = File(...), platforms: Optional[str] = None):
+    """Create a background verification job for large files"""
+    allowed_types = ['.csv', '.txt', '.text']
+    file_ext = Path(file.filename).suffix.lower() if file.filename else ''
+    
+    if file_ext not in allowed_types and file.content_type not in ['text/csv', 'text/plain']:
+        raise HTTPException(status_code=400, detail="Type de fichier invalide. Formats acceptés : CSV, TXT")
+    
+    try:
+        content = await file.read()
+        content_str = content.decode('utf-8')
+    except UnicodeDecodeError:
+        try:
+            content_str = content.decode('latin-1')
+        except Exception:
+            raise HTTPException(status_code=400, detail="Impossible de décoder le contenu du fichier")
+    
+    identifiers = parse_file_content(content_str)
+    
+    if not identifiers:
+        raise HTTPException(status_code=400, detail="Aucun email ou numéro de téléphone valide trouvé")
+    
+    # Parse platforms filter
+    platforms_filter = None
+    if platforms:
+        platforms_filter = [p.strip() for p in platforms.split(",") if p.strip()]
+    
+    # Create job
+    job_id = job_manager.create_job(len(identifiers), file.filename or "upload")
+    
+    # Start background task
+    asyncio.create_task(run_verification_job(job_id, identifiers, platforms_filter))
+    
+    return {
+        "job_id": job_id,
+        "total": len(identifiers),
+        "status": "pending",
+        "message": f"Job créé pour {len(identifiers)} identifiants. Le traitement commence..."
+    }
+
+
+@api_router.get("/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    """Get job status and progress"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    progress = (job["processed"] / job["total"] * 100) if job["total"] > 0 else 0
+    
+    return {
+        "id": job["id"],
+        "status": job["status"],
+        "total": job["total"],
+        "processed": job["processed"],
+        "progress": round(progress, 1),
+        "found": job["found"],
+        "not_found": job["not_found"],
+        "unverifiable": job["unverifiable"],
+        "errors": job["errors"],
+        "filename": job["filename"],
+        "created_at": job["created_at"],
+        "started_at": job["started_at"],
+        "completed_at": job["completed_at"],
+    }
+
+
+@api_router.get("/jobs/{job_id}/results/csv")
+async def download_job_csv(job_id: str):
+    """Download job results as CSV (only valid/found identifiers)"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    csv_path = Path(job["csv_file"])
+    if not csv_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier CSV non disponible")
+    
+    def iter_file():
+        with open(csv_path, "rb") as f:
+            yield b'\xef\xbb\xbf'  # UTF-8 BOM for Excel
+            for chunk in iter(lambda: f.read(8192), b''):
+                yield chunk
+    
+    filename = f"resultats_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.csv"
+    return StreamingResponse(
+        iter_file(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@api_router.get("/jobs/{job_id}/results/txt")
+async def download_job_txt(job_id: str):
+    """Download job results as TXT (only valid identifiers, one per line)"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    txt_path = Path(job["txt_file"])
+    if not txt_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier TXT non disponible")
+    
+    def iter_file():
+        with open(txt_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                yield chunk
+    
+    filename = f"valides_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.txt"
+    return StreamingResponse(
+        iter_file(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@api_router.get("/jobs/{job_id}/results/jsonl")
+async def download_job_jsonl(job_id: str):
+    """Download full job results as JSONL (all identifiers with all platform results)"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    jsonl_path = Path(job["results_file"])
+    if not jsonl_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier de résultats non disponible")
+    
+    def iter_file():
+        with open(jsonl_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                yield chunk
+    
+    filename = f"resultats_complets_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.jsonl"
+    return StreamingResponse(
+        iter_file(),
+        media_type="application/jsonl",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+
+@api_router.get("/jobs")
+async def list_jobs():
+    """List all jobs"""
+    jobs_list = []
+    for job in job_manager.jobs.values():
+        progress = (job["processed"] / job["total"] * 100) if job["total"] > 0 else 0
+        jobs_list.append({
+            "id": job["id"],
+            "status": job["status"],
+            "total": job["total"],
+            "processed": job["processed"],
+            "progress": round(progress, 1),
+            "filename": job["filename"],
+            "created_at": job["created_at"],
+        })
+    return {"jobs": sorted(jobs_list, key=lambda x: x["created_at"], reverse=True)}
 
 
 # ============ VERIFICATION ROUTES ============

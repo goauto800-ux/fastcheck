@@ -7,8 +7,6 @@ services:
     restart: always
     volumes:
       - mongo_data:/data/db
-    ports:
-      - "27017:27017"
     networks:
       - fast-network
 
@@ -20,22 +18,27 @@ services:
     restart: always
     environment:
       - MONGO_URL=mongodb://mongodb:27017/fast_checker
+      - DB_NAME=fast_checker
+      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1
     depends_on:
       - mongodb
+    ports:
+      - "127.0.0.1:8001:8001"
     networks:
       - fast-network
+    volumes:
+      - job_results:/tmp/fast_jobs
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - REACT_APP_BACKEND_URL=
+        - REACT_APP_BACKEND_URL=http://localhost:8001
     container_name: fast-frontend
     restart: always
     ports:
-      - "80:80"
-      - "443:443"
+      - "127.0.0.1:3000:80"
     depends_on:
       - backend
     networks:
@@ -43,6 +46,7 @@ services:
 
 volumes:
   mongo_data:
+  job_results:
 
 networks:
   fast-network:
