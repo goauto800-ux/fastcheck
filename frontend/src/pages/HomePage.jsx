@@ -10,15 +10,11 @@ import StatsBar from "../components/StatsBar";
 import ProxyManager from "../components/ProxyManager";
 import PlatformSelector from "../components/PlatformSelector";
 import FilePreviewModal from "../components/FilePreviewModal";
-import JobTracker from "../components/JobTracker";
 import { Button } from "../components/ui/button";
-import { Download, Zap, Trash2, ShieldAlert, FileText, Clock, List } from "lucide-react";
+import { Download, Zap, Trash2, ShieldAlert, FileText } from "lucide-react";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
-
-// Seuil pour basculer en mode job (traitement en arrière-plan)
-const JOB_THRESHOLD = 5000;
 
 export default function HomePage() {
   const [results, setResults] = useState([]);
@@ -30,8 +26,6 @@ export default function HomePage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState([]);
   const [filePreviewData, setFilePreviewData] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
-  const [activeJobId, setActiveJobId] = useState(null);
-  const [pendingFile, setPendingFile] = useState(null);
 
   useEffect(() => {
     const checkProxies = async () => {
@@ -43,55 +37,52 @@ export default function HomePage() {
   const handleVerify = useCallback(async (identifiers) => {
     if (!identifiers || identifiers.length === 0) { toast.error("Aucun email ou numéro valide trouvé"); return; }
     
-    // Pour les gros fichiers, utiliser le système de jobs
-    if (identifiers.length > JOB_THRESHOLD) {
-      toast.info(`${identifiers.length.toLocaleString()} identifiants détectés. Lancement du traitement en arrière-plan...`);
-      
-      // Créer un fichier blob pour l'envoi
-      const content = identifiers.join("\n");
-      const blob = new Blob([content], { type: "text/plain" });
-      const file = new File([blob], "verification.txt", { type: "text/plain" });
-      
-      const fd = new FormData();
-      fd.append("file", file);
-      if (selectedPlatforms.length > 0) {
-        fd.append("platforms", selectedPlatforms.join(","));
-      }
-      
-      try {
-        const response = await axios.post(`${API}/jobs/create`, fd, {
-          headers: { "Content-Type": "multipart/form-data" }
-        });
-        setActiveJobId(response.data.job_id);
-        toast.success(`Job créé ! ${response.data.total.toLocaleString()} identifiants en cours de traitement.`);
-      } catch (e) {
-        toast.error(e.response?.data?.detail || "Erreur lors de la création du job");
-      }
-      return;
-    }
+    setIsVerifying(true); 
+    setProgress(0); 
+    setVerifiedCount(0); 
+    setTotalToVerify(identifiers.length); 
+    setResults([]);
     
-    // Pour les petits fichiers, traitement normal
-    setIsVerifying(true); setProgress(0); setVerifiedCount(0); setTotalToVerify(identifiers.length); setResults([]);
-    let batchSize = 10;
-    try { const tr = await axios.get(`${API}/config/threads?total=${identifiers.length}`); batchSize = tr.data.recommended_batch_size || 10; } catch {}
+    // Get recommended batch size from backend
+    let batchSize = 50;
+    try { 
+      const tr = await axios.get(`${API}/config/threads?total=${identifiers.length}`); 
+      batchSize = tr.data.recommended_batch_size || 50; 
+    } catch {}
+    
     const totalBatches = Math.ceil(identifiers.length / batchSize);
     let completedCount = 0;
+    let allResults = [];
+    
     try {
       for (let i = 0; i < totalBatches; i++) {
         const batch = identifiers.slice(i * batchSize, (i + 1) * batchSize);
         const req = { identifiers: batch };
         if (selectedPlatforms.length > 0) req.platforms = selectedPlatforms;
-        const resp = await axios.post(`${API}/verify`, req);
-        setResults(prev => [...prev, ...resp.data.results]);
+        
+        try {
+          const resp = await axios.post(`${API}/verify`, req, { timeout: 300000 }); // 5 min timeout per batch
+          allResults = [...allResults, ...resp.data.results];
+          setResults(allResults);
+        } catch (batchError) {
+          console.error(`Batch ${i + 1} error:`, batchError);
+          // Continue with next batch even if one fails
+        }
+        
         completedCount += batch.length;
         setVerifiedCount(completedCount);
         setProgress((completedCount / identifiers.length) * 100);
       }
-      toast.success(`${identifiers.length} vérification(s) terminée(s)`);
+      
+      toast.success(`${completedCount} vérification(s) terminée(s)`);
     } catch (error) {
+      console.error("Verification error:", error);
       if (completedCount > 0) toast.warning(`${completedCount}/${identifiers.length} vérifiés`);
       else toast.error("Erreur lors de la vérification");
-    } finally { setIsVerifying(false); setProgress(100); }
+    } finally { 
+      setIsVerifying(false); 
+      setProgress(100); 
+    }
   }, [selectedPlatforms]);
 
   const handleFileUpload = useCallback(async (file) => {
@@ -100,54 +91,16 @@ export default function HomePage() {
     try { 
       const r = await axios.post(`${API}/parse-file`, fd, { headers: { "Content-Type": "multipart/form-data" } }); 
       setFilePreviewData(r.data);
-      setPendingFile(file);
     }
     catch (e) { toast.error(e.response?.data?.detail || "Erreur lors de l'analyse"); }
     finally { setIsParsing(false); }
   }, []);
 
   const handleFilePreviewConfirm = useCallback(async (ids, type) => {
-    const total = ids?.length || 0;
     setFilePreviewData(null);
-    
-    if (!ids || total === 0) { 
-      toast.error("Aucun identifiant sélectionné"); 
-      setPendingFile(null);
-      return; 
-    }
-    
-    // Pour les gros fichiers, créer un job directement avec le fichier
-    if (total > JOB_THRESHOLD && pendingFile) {
-      toast.info(`${total.toLocaleString()} identifiants détectés. Lancement du traitement en arrière-plan...`);
-      
-      const fd = new FormData();
-      
-      // Créer un fichier avec seulement les identifiants sélectionnés
-      const content = ids.join("\n");
-      const blob = new Blob([content], { type: "text/plain" });
-      const file = new File([blob], pendingFile.name || "verification.txt", { type: "text/plain" });
-      fd.append("file", file);
-      
-      if (selectedPlatforms.length > 0) {
-        fd.append("platforms", selectedPlatforms.join(","));
-      }
-      
-      try {
-        const response = await axios.post(`${API}/jobs/create`, fd, {
-          headers: { "Content-Type": "multipart/form-data" }
-        });
-        setActiveJobId(response.data.job_id);
-        toast.success(`Job créé ! ${response.data.total.toLocaleString()} identifiants en cours de traitement.`);
-      } catch (e) {
-        toast.error(e.response?.data?.detail || "Erreur lors de la création du job");
-      }
-      setPendingFile(null);
-      return;
-    }
-    
-    setPendingFile(null);
+    if (!ids || ids.length === 0) { toast.error("Aucun identifiant sélectionné"); return; }
     handleVerify(ids);
-  }, [handleVerify, pendingFile, selectedPlatforms]);
+  }, [handleVerify]);
 
   // EXPORT: Only FOUND/VALID
   const handleExport = useCallback(() => {
@@ -283,8 +236,7 @@ export default function HomePage() {
         <ResultsGrid results={results} isLoading={isVerifying} />
       </main>
 
-      {filePreviewData && <FilePreviewModal data={filePreviewData} onConfirm={handleFilePreviewConfirm} onCancel={() => { setFilePreviewData(null); setPendingFile(null); }} disabled={isVerifying} />}
-      {activeJobId && <JobTracker jobId={activeJobId} onClose={() => setActiveJobId(null)} />}
+      {filePreviewData && <FilePreviewModal data={filePreviewData} onConfirm={handleFilePreviewConfirm} onCancel={() => setFilePreviewData(null)} disabled={isVerifying} />}
     </div>
   );
 }
