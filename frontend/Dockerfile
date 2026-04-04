@@ -4,14 +4,16 @@ FROM node:18-alpine AS build
 WORKDIR /app
 
 # Install dependencies
-COPY package.json yarn.lock ./
-RUN yarn install --frozen-lockfile
+COPY package.json ./
+RUN yarn install
 
 # Copy source code
 COPY . .
 
-# Build with backend URL pointing to /api (nginx will proxy)
-ENV REACT_APP_BACKEND_URL=
+# Build argument for backend URL
+ARG REACT_APP_BACKEND_URL=http://localhost:8001
+ENV REACT_APP_BACKEND_URL=$REACT_APP_BACKEND_URL
+
 RUN yarn build
 
 # Stage 2: Serve with nginx

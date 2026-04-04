@@ -19,11 +19,11 @@ services:
     environment:
       - MONGO_URL=mongodb://mongodb:27017/fast_checker
       - DB_NAME=fast_checker
-      - CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://localhost,http://127.0.0.1
+      - CORS_ORIGINS=*
     depends_on:
       - mongodb
     ports:
-      - "127.0.0.1:8001:8001"
+      - "0.0.0.0:8001:8001"
     networks:
       - fast-network
     volumes:
@@ -34,11 +34,11 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - REACT_APP_BACKEND_URL=http://localhost:8001
+        - REACT_APP_BACKEND_URL=http://62.171.181.238:8001
     container_name: fast-frontend
     restart: always
     ports:
-      - "127.0.0.1:3000:80"
+      - "0.0.0.0:3000:80"
     depends_on:
       - backend
     networks:
