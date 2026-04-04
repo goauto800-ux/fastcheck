@@ -29,278 +29,185 @@ export default function HomePage() {
 
   useEffect(() => {
     const checkProxies = async () => {
-      try {
-        const resp = await axios.get(`${API}/proxies`);
-        setProxyCount(resp.data.active || 0);
-      } catch (e) { setProxyCount(0); }
+      try { const r = await axios.get(`${API}/proxies`); setProxyCount(r.data.active || 0); } catch (e) { setProxyCount(0); }
     };
     checkProxies();
   }, []);
 
   const handleVerify = useCallback(async (identifiers) => {
-    if (!identifiers || identifiers.length === 0) {
-      toast.error("Aucun email ou numéro valide trouvé");
-      return;
-    }
-    setIsVerifying(true);
-    setProgress(0);
-    setVerifiedCount(0);
-    setTotalToVerify(identifiers.length);
-    setResults([]);
-
+    if (!identifiers || identifiers.length === 0) { toast.error("Aucun email ou numéro valide trouvé"); return; }
+    setIsVerifying(true); setProgress(0); setVerifiedCount(0); setTotalToVerify(identifiers.length); setResults([]);
     let batchSize = 10;
-    try {
-      const threadResp = await axios.get(`${API}/config/threads?total=${identifiers.length}`);
-      batchSize = threadResp.data.recommended_batch_size || 10;
-    } catch {}
-
+    try { const tr = await axios.get(`${API}/config/threads?total=${identifiers.length}`); batchSize = tr.data.recommended_batch_size || 10; } catch {}
     const totalBatches = Math.ceil(identifiers.length / batchSize);
     let completedCount = 0;
-
     try {
       for (let i = 0; i < totalBatches; i++) {
         const batch = identifiers.slice(i * batchSize, (i + 1) * batchSize);
-        const requestData = { identifiers: batch };
-        if (selectedPlatforms.length > 0) requestData.platforms = selectedPlatforms;
-
-        const response = await axios.post(`${API}/verify`, requestData);
-        setResults((prev) => [...prev, ...response.data.results]);
+        const req = { identifiers: batch };
+        if (selectedPlatforms.length > 0) req.platforms = selectedPlatforms;
+        const resp = await axios.post(`${API}/verify`, req);
+        setResults(prev => [...prev, ...resp.data.results]);
         completedCount += batch.length;
         setVerifiedCount(completedCount);
         setProgress((completedCount / identifiers.length) * 100);
       }
       toast.success(`${identifiers.length} vérification(s) terminée(s)`);
     } catch (error) {
-      console.error("Verification error:", error);
-      if (completedCount > 0) toast.warning(`${completedCount}/${identifiers.length} vérifiés — erreur sur le reste`);
+      if (completedCount > 0) toast.warning(`${completedCount}/${identifiers.length} vérifiés`);
       else toast.error("Erreur lors de la vérification");
-    } finally {
-      setIsVerifying(false);
-      setProgress(100);
-    }
+    } finally { setIsVerifying(false); setProgress(100); }
   }, [selectedPlatforms]);
 
   const handleFileUpload = useCallback(async (file) => {
     if (!file) return;
-    const formData = new FormData();
-    formData.append("file", file);
-    setIsParsing(true);
-    try {
-      const response = await axios.post(`${API}/parse-file`, formData, { headers: { "Content-Type": "multipart/form-data" } });
-      setFilePreviewData(response.data);
-    } catch (error) {
-      const message = error.response?.data?.detail || "Erreur lors de l'analyse du fichier";
-      toast.error(message);
-    } finally { setIsParsing(false); }
+    const fd = new FormData(); fd.append("file", file); setIsParsing(true);
+    try { const r = await axios.post(`${API}/parse-file`, fd, { headers: { "Content-Type": "multipart/form-data" } }); setFilePreviewData(r.data); }
+    catch (e) { toast.error(e.response?.data?.detail || "Erreur lors de l'analyse"); }
+    finally { setIsParsing(false); }
   }, []);
 
-  const handleFilePreviewConfirm = useCallback(async (identifiers, type) => {
+  const handleFilePreviewConfirm = useCallback(async (ids, type) => {
     setFilePreviewData(null);
-    if (!identifiers || identifiers.length === 0) { toast.error("Aucun identifiant sélectionné"); return; }
-    const typeLabel = type === "email" ? "emails" : type === "phone" ? "numéros" : "identifiants";
-    toast.info(`Vérification de ${identifiers.length} ${typeLabel}...`);
-    handleVerify(identifiers);
+    if (!ids || ids.length === 0) { toast.error("Aucun identifiant sélectionné"); return; }
+    handleVerify(ids);
   }, [handleVerify]);
 
-  const handleFilePreviewCancel = useCallback(() => { setFilePreviewData(null); }, []);
-
-  // ===== EXPORT: ONLY FOUND/VALID EMAILS =====
+  // EXPORT: Only FOUND/VALID
   const handleExport = useCallback(() => {
-    if (results.length === 0) { toast.error("Aucun résultat à exporter"); return; }
-
-    // Collect only identifiers that have at least one "found" platform
-    const validLines = [];
+    if (results.length === 0) { toast.error("Aucun résultat"); return; }
+    const valid = [];
     results.forEach(r => {
-      const foundPlatforms = r.platforms.filter(p => p.status === "found");
-      if (foundPlatforms.length > 0) {
-        // If user selected specific platforms, only count those
-        const relevantFound = selectedPlatforms.length > 0
-          ? foundPlatforms.filter(p => selectedPlatforms.includes(p.platform))
-          : foundPlatforms;
-        if (relevantFound.length > 0) {
-          validLines.push({
-            identifier: r.identifier,
-            type: r.identifier_type === "email" ? "Email" : "Téléphone",
-            platforms: relevantFound.map(p => p.platform.charAt(0).toUpperCase() + p.platform.slice(1).replace('_', ' ')),
-          });
-        }
-      }
+      const found = r.platforms.filter(p => p.status === "found");
+      const relevant = selectedPlatforms.length > 0 ? found.filter(p => selectedPlatforms.includes(p.platform)) : found;
+      if (relevant.length > 0) valid.push({ id: r.identifier, type: r.identifier_type === "email" ? "Email" : "Tél", platforms: relevant.map(p => p.platform.charAt(0).toUpperCase() + p.platform.slice(1).replace('_', ' ')) });
     });
-
-    if (validLines.length === 0) { toast.error("Aucun résultat valide à exporter"); return; }
-
-    // CSV: Identifier, Type, Platforms found
-    const headers = ["Identifiant", "Type", "Plateformes trouvées"];
-    const rows = validLines.map(v => [
-      `"${v.identifier}"`,
-      `"${v.type}"`,
-      `"${v.platforms.join(', ')}"`,
-    ]);
-    const csvContent = [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `fast_valides_${new Date().toISOString().split("T")[0]}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success(`${validLines.length} identifiant(s) valide(s) exporté(s)`);
+    if (valid.length === 0) { toast.error("Aucun résultat valide"); return; }
+    const csv = ["Identifiant,Type,Plateformes", ...valid.map(v => `"${v.id}","${v.type}","${v.platforms.join(', ')}"`)].join("\n");
+    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+    a.download = `diblowcloud_valides_${new Date().toISOString().split("T")[0]}.csv`; a.click(); URL.revokeObjectURL(url);
+    toast.success(`${valid.length} valide(s) exporté(s)`);
   }, [results, selectedPlatforms]);
 
   const handleExportTxt = useCallback(() => {
-    if (results.length === 0) { toast.error("Aucun résultat à exporter"); return; }
-
-    const validLines = [];
+    if (results.length === 0) { toast.error("Aucun résultat"); return; }
+    const valid = [];
     results.forEach(r => {
-      const foundPlatforms = r.platforms.filter(p => p.status === "found");
-      if (foundPlatforms.length > 0) {
-        const relevantFound = selectedPlatforms.length > 0
-          ? foundPlatforms.filter(p => selectedPlatforms.includes(p.platform))
-          : foundPlatforms;
-        if (relevantFound.length > 0) {
-          validLines.push(r.identifier);
-        }
-      }
+      const found = r.platforms.filter(p => p.status === "found");
+      const relevant = selectedPlatforms.length > 0 ? found.filter(p => selectedPlatforms.includes(p.platform)) : found;
+      if (relevant.length > 0) valid.push(r.identifier);
     });
-
-    if (validLines.length === 0) { toast.error("Aucun résultat valide à exporter"); return; }
-
-    // TXT: Just a clean list of valid identifiers, one per line
-    const txtContent = validLines.join("\n");
-    const blob = new Blob([txtContent], { type: "text/plain;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `fast_valides_${new Date().toISOString().split("T")[0]}.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
-    toast.success(`${validLines.length} identifiant(s) valide(s) exporté(s)`);
+    if (valid.length === 0) { toast.error("Aucun résultat valide"); return; }
+    const blob = new Blob([valid.join("\n")], { type: "text/plain;charset=utf-8;" });
+    const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url;
+    a.download = `diblowcloud_valides_${new Date().toISOString().split("T")[0]}.txt`; a.click(); URL.revokeObjectURL(url);
+    toast.success(`${valid.length} valide(s) exporté(s)`);
   }, [results, selectedPlatforms]);
 
-  const handleClear = useCallback(() => {
-    setResults([]);
-    setProgress(0);
-    setTotalToVerify(0);
-    setVerifiedCount(0);
-    toast.info("Résultats effacés");
-  }, []);
+  const handleClear = useCallback(() => { setResults([]); setProgress(0); setTotalToVerify(0); setVerifiedCount(0); toast.info("Résultats effacés"); }, []);
 
   const stats = {
     total: results.length,
-    found: results.reduce((acc, r) => acc + r.platforms.filter((p) => p.status === "found").length, 0),
-    notFound: results.reduce((acc, r) => acc + r.platforms.filter((p) => p.status === "not_found").length, 0),
-    unverifiable: results.reduce((acc, r) => acc + r.platforms.filter((p) => p.status === "unverifiable").length, 0),
-    rateLimited: results.reduce((acc, r) => acc + r.platforms.filter((p) => p.status === "rate_limited" || p.status === "error").length, 0),
+    found: results.reduce((a, r) => a + r.platforms.filter(p => p.status === "found").length, 0),
+    notFound: results.reduce((a, r) => a + r.platforms.filter(p => p.status === "not_found").length, 0),
+    unverifiable: results.reduce((a, r) => a + r.platforms.filter(p => p.status === "unverifiable").length, 0),
+    rateLimited: results.reduce((a, r) => a + r.platforms.filter(p => p.status === "rate_limited" || p.status === "error").length, 0),
   };
 
-  // Count only valid exportable identifiers
   const validExportCount = results.filter(r => {
-    const foundPlatforms = r.platforms.filter(p => p.status === "found");
-    if (foundPlatforms.length === 0) return false;
-    if (selectedPlatforms.length > 0) {
-      return foundPlatforms.some(p => selectedPlatforms.includes(p.platform));
-    }
-    return true;
+    const f = r.platforms.filter(p => p.status === "found");
+    if (f.length === 0) return false;
+    return selectedPlatforms.length > 0 ? f.some(p => selectedPlatforms.includes(p.platform)) : true;
   }).length;
 
   return (
-    <div className="min-h-screen bg-[#060612] relative">
-      {/* Ambient glow */}
-      <div className="ambient-glow" />
-      <div className="ambient-glow-2" />
+    <div className="min-h-screen bg-[#05050A] relative">
+      <Header />
 
-      <div className="relative z-10">
-        <Header />
-
-        <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {/* Hero */}
-          <div className="text-center mb-10">
-            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight mb-2">
-              <span className="text-white">Vérification </span>
-              <span className="neon-cyan">Rapide</span>
-            </h1>
-            <p className="text-sm text-[#44445e] max-w-xl mx-auto">
-              Vérifiez emails et numéros sur Netflix, Uber Eats, Binance, Coinbase, Deliveroo et 30+ plateformes
-            </p>
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Hero */}
+        <div className="text-center mb-10 animate-fade-in-up">
+          <div className="inline-block mb-4">
+            <span className="px-4 py-1.5 rounded-full text-xs font-medium bg-white/5 border border-[#00F0FF]/30 text-[#00F0FF]">
+              Vérification multi-plateforme ultra-rapide
+            </span>
           </div>
+          <h1 className="text-4xl sm:text-5xl font-bold tracking-tighter mb-3 font-heading">
+            <span className="cosmic-gradient">Vérification Rapide</span>
+          </h1>
+          <p className="text-base text-gray-400 max-w-xl mx-auto leading-relaxed">
+            Vérifiez emails et numéros sur Netflix, Uber Eats, Binance, Coinbase, Deliveroo et 30+ plateformes
+          </p>
+        </div>
 
-          <ProxyManager onProxyChange={(count) => setProxyCount(count)} />
-          <PlatformSelector selectedPlatforms={selectedPlatforms} onSelectionChange={setSelectedPlatforms} disabled={isVerifying} />
+        <ProxyManager onProxyChange={(count) => setProxyCount(count)} />
+        <PlatformSelector selectedPlatforms={selectedPlatforms} onSelectionChange={setSelectedPlatforms} disabled={isVerifying} />
 
-          {/* Proxy Warning */}
-          {proxyCount === 0 && (
-            <div className="mb-6 px-4 py-3 rounded-lg border border-[#ffb020]/15 bg-[#ffb020]/[0.03]" style={{boxShadow:'0 0 20px rgba(255,176,32,0.04)'}}>
-              <div className="flex items-start gap-2.5">
-                <ShieldAlert className="w-4 h-4 text-[#ffb020] flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[#ffb020] text-xs font-medium">Aucun proxy configuré</p>
-                  <p className="text-[#ffb020]/40 text-[11px] mt-0.5">Netflix, Uber Eats, Binance, Coinbase et Deliveroo nécessitent des proxies résidentiels.</p>
-                </div>
+        {proxyCount === 0 && (
+          <div className="mb-6 px-4 py-3 rounded-xl glass-card border-yellow-500/20">
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-yellow-400 text-xs font-semibold">Aucun proxy configuré</p>
+                <p className="text-yellow-400/40 text-[11px] mt-0.5">Netflix, Uber Eats, Binance, Coinbase et Deliveroo nécessitent des proxies résidentiels.</p>
               </div>
             </div>
-          )}
-
-          {/* Input Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-            <UploadZone onFileUpload={handleFileUpload} disabled={isVerifying || isParsing} />
-            <TextPasteZone onVerify={handleVerify} disabled={isVerifying} />
           </div>
+        )}
 
-          {/* Progress */}
-          <AnimatePresence>
-            {isVerifying && (
-              <motion.div initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} className="mb-6">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs text-[#7a7a9a] flex items-center gap-1.5">
-                    <Zap className="w-3.5 h-3.5 text-[#00e5ff] animate-pulse" style={{filter:'drop-shadow(0 0 6px rgba(0,229,255,0.5))'}} />
-                    Vérification en cours...
-                  </span>
-                  <span className="text-xs font-mono">
-                    <span className="neon-cyan">{verifiedCount}</span>
-                    <span className="text-[#44445e]">/</span>
-                    <span className="text-[#7a7a9a]">{totalToVerify}</span>
-                    <span className="text-[#44445e] ml-1">({Math.round(progress)}%)</span>
-                  </span>
-                </div>
-                <div className="h-1.5 bg-white/[0.03] rounded-full overflow-hidden">
-                  <motion.div className="h-full progress-bar rounded-full" initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 0.3 }} />
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <UploadZone onFileUpload={handleFileUpload} disabled={isVerifying || isParsing} />
+          <TextPasteZone onVerify={handleVerify} disabled={isVerifying} />
+        </div>
 
-          {/* Stats & Actions */}
-          {results.length > 0 && (
-            <div className="mb-6">
-              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-                <StatsBar stats={stats} />
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handleClear} data-testid="clear-results-btn"
-                    className="border-white/[0.06] text-[#7a7a9a] hover:text-white hover:border-white/[0.12] bg-transparent text-xs h-8">
-                    <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Effacer
-                  </Button>
-                  <Button size="sm" onClick={handleExport} data-testid="export-results-btn"
-                    className="bg-[#00e5ff]/[0.08] text-[#00e5ff] hover:bg-[#00e5ff]/[0.15] border border-[#00e5ff]/20 text-xs h-8 btn-glow">
-                    <Download className="w-3.5 h-3.5 mr-1.5" />
-                    CSV {validExportCount > 0 && `(${validExportCount})`}
-                  </Button>
-                  <Button size="sm" onClick={handleExportTxt} data-testid="export-txt-btn"
-                    className="bg-white/[0.03] text-[#7a7a9a] hover:text-white hover:bg-white/[0.06] border border-white/[0.06] text-xs h-8">
-                    <FileText className="w-3.5 h-3.5 mr-1.5" />
-                    TXT {validExportCount > 0 && `(${validExportCount})`}
-                  </Button>
-                </div>
+        <AnimatePresence>
+          {isVerifying && (
+            <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm text-gray-400 flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-[#00F0FF] animate-glow-pulse" /> Vérification en cours...
+                </span>
+                <span className="text-sm font-mono">
+                  <span className="text-[#00F0FF]">{verifiedCount}</span>
+                  <span className="text-gray-600">/</span>
+                  <span className="text-gray-400">{totalToVerify}</span>
+                  <span className="text-gray-600 ml-1">({Math.round(progress)}%)</span>
+                </span>
+              </div>
+              <div className="h-2 bg-white/5 rounded-full overflow-hidden border border-white/5">
+                <motion.div className="h-full progress-bar rounded-full" initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 0.3 }} />
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {results.length > 0 && (
+          <div className="mb-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+              <StatsBar stats={stats} />
+              <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={handleClear} data-testid="clear-results-btn"
+                  className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 bg-transparent text-xs h-8">
+                  <Trash2 className="w-3.5 h-3.5 mr-1.5" /> Effacer
+                </Button>
+                <Button size="sm" onClick={handleExport} data-testid="export-results-btn"
+                  className="btn-click-effect bg-gradient-to-r from-[#00F0FF] to-[#8B5CF6] text-white font-bold text-xs h-8 hover:opacity-90">
+                  <Download className="w-3.5 h-3.5 mr-1.5" /> CSV {validExportCount > 0 && `(${validExportCount})`}
+                </Button>
+                <Button size="sm" onClick={handleExportTxt} data-testid="export-txt-btn"
+                  className="bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/10 text-xs h-8">
+                  <FileText className="w-3.5 h-3.5 mr-1.5" /> TXT {validExportCount > 0 && `(${validExportCount})`}
+                </Button>
               </div>
             </div>
-          )}
+          </div>
+        )}
 
-          <ResultsGrid results={results} isLoading={isVerifying} />
-        </main>
-      </div>
+        <ResultsGrid results={results} isLoading={isVerifying} />
+      </main>
 
-      {filePreviewData && (
-        <FilePreviewModal data={filePreviewData} onConfirm={handleFilePreviewConfirm} onCancel={handleFilePreviewCancel} disabled={isVerifying} />
-      )}
+      {filePreviewData && <FilePreviewModal data={filePreviewData} onConfirm={handleFilePreviewConfirm} onCancel={() => setFilePreviewData(null)} disabled={isVerifying} />}
     </div>
   );
 }

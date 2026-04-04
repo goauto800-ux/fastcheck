@@ -5,7 +5,7 @@ import HomePage from "./pages/HomePage";
 
 function App() {
   return (
-    <div className="App min-h-screen bg-[#060612]">
+    <div className="App min-h-screen bg-[#05050A]">
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -16,11 +16,11 @@ function App() {
         theme="dark"
         toastOptions={{
           style: {
-            background: '#0f0f22',
-            border: '1px solid rgba(0,229,255,0.12)',
-            color: '#eeeef4',
-            fontFamily: 'Inter, sans-serif',
-            boxShadow: '0 0 20px rgba(0,229,255,0.06)',
+            background: '#0C0C16',
+            border: '1px solid rgba(255,255,255,0.1)',
+            color: '#FFFFFF',
+            fontFamily: 'Manrope, sans-serif',
+            boxShadow: '0 0 20px rgba(139,92,246,0.1)',
           },
         }}
       />

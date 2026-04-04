@@ -12,123 +12,85 @@ const PLATFORM_CONFIG = {
   binance: { name: "Binance", color: "#F0B90B", category: "crypto", needsProxy: true },
   coinbase: { name: "Coinbase", color: "#0052FF", category: "crypto", needsProxy: true },
   deliveroo: { name: "Deliveroo", color: "#00CCBC", category: "food", needsProxy: true },
-  amazon: { name: "Amazon", color: "#FF9900", category: "shopping" },
-  ebay: { name: "eBay", color: "#E53238", category: "shopping" },
-  nike: { name: "Nike", color: "#FFFFFF", category: "shopping" },
-  discord: { name: "Discord", color: "#5865F2", category: "social" },
-  instagram: { name: "Instagram", color: "#E4405F", category: "social" },
-  twitter: { name: "Twitter/X", color: "#FFFFFF", category: "social" },
-  pinterest: { name: "Pinterest", color: "#BD081C", category: "social" },
-  snapchat: { name: "Snapchat", color: "#FFFC00", category: "social" },
-  tumblr: { name: "Tumblr", color: "#36465D", category: "social" },
-  imgur: { name: "Imgur", color: "#1BB76E", category: "social" },
-  patreon: { name: "Patreon", color: "#FF424D", category: "social" },
-  strava: { name: "Strava", color: "#FC4C02", category: "sport" },
-  quora: { name: "Quora", color: "#B92B27", category: "social" },
-  spotify: { name: "Spotify", color: "#1DB954", category: "music" },
-  soundcloud: { name: "SoundCloud", color: "#FF5500", category: "music" },
-  github: { name: "GitHub", color: "#FFFFFF", category: "dev" },
-  docker: { name: "Docker", color: "#2496ED", category: "dev" },
-  codecademy: { name: "Codecademy", color: "#1F4056", category: "dev" },
-  google: { name: "Google", color: "#4285F4", category: "email" },
-  yahoo: { name: "Yahoo", color: "#6001D2", category: "email" },
-  protonmail: { name: "ProtonMail", color: "#6D4AFF", category: "email" },
-  adobe: { name: "Adobe", color: "#FF0000", category: "software" },
-  office365: { name: "Office 365", color: "#D83B01", category: "software" },
-  lastpass: { name: "LastPass", color: "#D32D27", category: "software" },
-  firefox: { name: "Firefox", color: "#FF7139", category: "software" },
-  venmo: { name: "Venmo", color: "#3D95CE", category: "payment" },
-  wordpress: { name: "WordPress", color: "#21759B", category: "software" },
-  blablacar: { name: "BlaBlaCar", color: "#00AAFF", category: "transport" },
-  buymeacoffee: { name: "Buy Me Coffee", color: "#FFDD00", category: "crowdfunding" },
-  eventbrite: { name: "Eventbrite", color: "#F05537", category: "events" },
+  amazon: { name: "Amazon", color: "#FF9900" }, ebay: { name: "eBay", color: "#E53238" },
+  nike: { name: "Nike", color: "#FFFFFF" }, discord: { name: "Discord", color: "#5865F2" },
+  instagram: { name: "Instagram", color: "#E4405F" }, twitter: { name: "Twitter/X", color: "#FFFFFF" },
+  pinterest: { name: "Pinterest", color: "#BD081C" }, snapchat: { name: "Snapchat", color: "#FFFC00" },
+  tumblr: { name: "Tumblr", color: "#36465D" }, imgur: { name: "Imgur", color: "#1BB76E" },
+  patreon: { name: "Patreon", color: "#FF424D" }, strava: { name: "Strava", color: "#FC4C02" },
+  quora: { name: "Quora", color: "#B92B27" }, spotify: { name: "Spotify", color: "#1DB954" },
+  soundcloud: { name: "SoundCloud", color: "#FF5500" }, github: { name: "GitHub", color: "#FFFFFF" },
+  docker: { name: "Docker", color: "#2496ED" }, codecademy: { name: "Codecademy", color: "#1F4056" },
+  google: { name: "Google", color: "#4285F4" }, yahoo: { name: "Yahoo", color: "#6001D2" },
+  protonmail: { name: "ProtonMail", color: "#6D4AFF" }, adobe: { name: "Adobe", color: "#FF0000" },
+  office365: { name: "Office 365", color: "#D83B01" }, lastpass: { name: "LastPass", color: "#D32D27" },
+  firefox: { name: "Firefox", color: "#FF7139" }, venmo: { name: "Venmo", color: "#3D95CE" },
+  wordpress: { name: "WordPress", color: "#21759B" }, blablacar: { name: "BlaBlaCar", color: "#00AAFF" },
+  buymeacoffee: { name: "Buy Me Coffee", color: "#FFDD00" }, eventbrite: { name: "Eventbrite", color: "#F05537" },
 };
-
-function getCategoryIcon(category) {
-  const map = { shopping: ShoppingCart, food: ShoppingCart, social: MessageCircle, music: Music, streaming: Music, dev: Code, email: Mail, software: Briefcase, transport: Car, crowdfunding: Coffee, events: Calendar, sport: Dumbbell, crypto: Globe, payment: Globe };
-  return map[category] || Globe;
-}
 
 function PlatformIcon({ platform, config }) {
   const logo = platformLogos[platform];
   const color = config?.color || getPlatformColor(platform);
-  if (logo) {
-    return <div className="w-4 h-4 flex items-center justify-center" style={{ color, filter: `drop-shadow(0 0 4px ${color}50)` }}>{logo}</div>;
-  }
-  const Icon = getCategoryIcon(config?.category);
-  return <Icon className="w-3.5 h-3.5" style={{ color, filter: `drop-shadow(0 0 3px ${color}40)` }} />;
+  if (logo) return <div className="w-4 h-4 flex items-center justify-center" style={{ color }}>{logo}</div>;
+  return <div className="w-3 h-3 rounded-full" style={{ backgroundColor: color, opacity: 0.6 }} />;
 }
 
 function StatusBadge({ status }) {
-  const configs = {
-    pending: { color: "text-[#ffb020]", icon: Loader2, label: "En cours", spin: true },
-    found: { color: "text-[#00ff88]", icon: CheckCircle, label: "Trouvé", glow: "drop-shadow(0 0 4px rgba(0,255,136,0.4))" },
-    unverifiable: { color: "text-[#ffb020]", icon: ShieldAlert, label: "N/V" },
-    rate_limited: { color: "text-orange-400", icon: AlertCircle, label: "Limité" },
-    error: { color: "text-orange-400", icon: AlertCircle, label: "Erreur" },
-    not_supported: { color: "text-[#44445e]", icon: XCircle, label: "N/S" },
+  const map = {
+    pending: { c: "text-yellow-400", icon: Loader2, l: "En cours", spin: true },
+    found: { c: "text-green-400", icon: CheckCircle, l: "Trouvé" },
+    unverifiable: { c: "text-yellow-400", icon: ShieldAlert, l: "N/V" },
+    rate_limited: { c: "text-orange-400", icon: AlertCircle, l: "Limité" },
+    error: { c: "text-orange-400", icon: AlertCircle, l: "Erreur" },
+    not_supported: { c: "text-gray-600", icon: XCircle, l: "N/S" },
   };
-  const cfg = configs[status] || { color: "text-[#ff3060]", icon: XCircle, label: "Non trouvé" };
+  const cfg = map[status] || { c: "text-red-400", icon: XCircle, l: "Non trouvé" };
   const Icon = cfg.icon;
   return (
-    <div className={`flex items-center gap-1 ${cfg.color}`}>
-      <Icon className={`w-3 h-3 ${cfg.spin ? 'animate-spin' : ''}`} style={cfg.glow ? {filter: cfg.glow} : {}} />
-      <span className="text-[11px] font-mono">{cfg.label}</span>
+    <div className={`flex items-center gap-1 ${cfg.c}`}>
+      <Icon className={`w-3 h-3 ${cfg.spin ? 'animate-spin' : ''}`} />
+      <span className="text-[11px] font-mono">{cfg.l}</span>
     </div>
   );
 }
 
 function ResultCard({ result, index }) {
   const isEmail = result.identifier_type === "email";
-  const foundCount = result.platforms.filter((p) => p.status === "found").length;
-  const unverifiableCount = result.platforms.filter((p) => p.status === "unverifiable").length;
-  const totalCount = result.platforms.length;
-  const verifiedCount = totalCount - unverifiableCount;
+  const foundCount = result.platforms.filter(p => p.status === "found").length;
+  const unv = result.platforms.filter(p => p.status === "unverifiable").length;
+  const verified = result.platforms.length - unv;
   const hasFound = foundCount > 0;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.02, duration: 0.2 }}
-      className="masonry-item"
-      data-testid={`result-card-${index}`}
-    >
-      <div className={`bg-[#0c0c1d] border rounded-xl p-4 transition-all duration-200 glow-card ${
-        hasFound ? 'border-[#00ff88]/15' : 'border-white/[0.05]'
-      }`}>
+    <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.02, duration: 0.25 }} className="masonry-item" data-testid={`result-card-${index}`}>
+      <div className={`glass-card rounded-xl p-4 hover-lift ${hasFound ? 'border-green-500/20 shadow-[0_0_20px_rgba(0,255,100,0.06)]' : ''}`}>
         {/* Header */}
-        <div className="flex items-start gap-2.5 mb-3 pb-3 border-b border-white/[0.04]">
-          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-            isEmail ? "bg-[#00e5ff]/[0.08] text-[#00e5ff]" : "bg-[#a855f7]/[0.08] text-[#a855f7]"
-          }`} style={isEmail ? {boxShadow:'0 0 12px rgba(0,229,255,0.08)'} : {boxShadow:'0 0 12px rgba(168,85,247,0.08)'}}>
-            {isEmail ? <Mail className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
+        <div className="flex items-start gap-2.5 mb-3 pb-3 border-b border-white/5">
+          <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-gradient-to-br ${isEmail ? 'from-[#00F0FF]/20 to-[#8B5CF6]/20' : 'from-[#FF00FF]/20 to-[#8B5CF6]/20'}`}>
+            {isEmail ? <Mail className="w-4 h-4 text-[#00F0FF]" /> : <Phone className="w-4 h-4 text-[#FF00FF]" />}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-white text-sm font-medium truncate font-mono" title={result.identifier}>{result.identifier}</p>
-            <p className="text-[#44445e] text-[11px] mt-0.5">
-              {isEmail ? "Email" : "Tél"} · <span className={foundCount > 0 ? 'neon-green' : 'text-[#ff3060]'}>{foundCount}</span>/{verifiedCount}
-              {unverifiableCount > 0 && <span className="text-[#ffb020]"> · {unverifiableCount} n/v</span>}
+            <p className="text-gray-500 text-[11px] mt-0.5">
+              {isEmail ? "Email" : "Tél"} · <span className={foundCount > 0 ? 'text-green-400' : 'text-red-400'}>{foundCount}</span>/{verified}
+              {unv > 0 && <span className="text-yellow-400"> · {unv} n/v</span>}
             </p>
           </div>
         </div>
-
         {/* Platforms */}
         <div className="space-y-0 max-h-[360px] overflow-y-auto">
-          {result.platforms.map((platform, idx) => {
-            const config = PLATFORM_CONFIG[platform.platform];
+          {result.platforms.map((p, idx) => {
+            const cfg = PLATFORM_CONFIG[p.platform];
             return (
-              <div key={platform.platform}
-                className={`flex items-center justify-between py-2 ${idx < result.platforms.length - 1 ? "border-b border-white/[0.03]" : ""}`}
-                data-testid={`platform-${platform.platform}-${platform.status}`}>
+              <div key={p.platform} className={`flex items-center justify-between py-2 ${idx < result.platforms.length - 1 ? 'border-b border-white/5' : ''}`}
+                data-testid={`platform-${p.platform}-${p.status}`}>
                 <div className="flex items-center gap-2">
-                  <PlatformIcon platform={platform.platform} config={config} />
-                  <span className="text-[12px] text-[#7a7a9a]">{config?.name || platform.platform}</span>
-                  {config?.needsProxy && (
-                    <span className="text-[9px] px-1 py-px rounded bg-[#ffb020]/10 text-[#ffb020]/60 font-mono">PROXY</span>
-                  )}
+                  <PlatformIcon platform={p.platform} config={cfg} />
+                  <span className="text-xs text-gray-400">{cfg?.name || p.platform}</span>
+                  {cfg?.needsProxy && <span className="text-[8px] px-1 py-px rounded bg-yellow-500/10 text-yellow-500/60 font-mono uppercase">proxy</span>}
                 </div>
-                <StatusBadge status={platform.status} />
+                <StatusBadge status={p.status} />
               </div>
             );
           })}
@@ -141,19 +103,18 @@ function ResultCard({ result, index }) {
 export default function ResultsGrid({ results, isLoading }) {
   if (results.length === 0 && !isLoading) {
     return (
-      <div className="text-center py-16" data-testid="empty-results">
-        <div className="w-14 h-14 rounded-xl bg-white/[0.02] flex items-center justify-center mx-auto mb-3" style={{boxShadow:'0 0 30px rgba(0,229,255,0.04)'}}>
-          <Search className="w-7 h-7 text-[#44445e]" />
+      <div className="text-center py-20" data-testid="empty-results">
+        <div className="w-16 h-16 rounded-2xl bg-white/[0.03] border border-white/10 flex items-center justify-center mx-auto mb-4">
+          <Search className="w-8 h-8 text-gray-600" />
         </div>
-        <p className="text-[#44445e] text-sm">Entrez des emails ou numéros pour vérifier sur 35+ plateformes.</p>
+        <p className="text-gray-500 text-sm">Entrez des emails ou numéros pour vérifier sur 35+ plateformes.</p>
       </div>
     );
   }
-
   return (
     <div className="masonry-grid" data-testid="results-grid">
       <AnimatePresence mode="popLayout">
-        {results.map((result, index) => <ResultCard key={result.id} result={result} index={index} />)}
+        {results.map((result, i) => <ResultCard key={result.id} result={result} index={i} />)}
       </AnimatePresence>
     </div>
   );

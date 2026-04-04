@@ -1,18 +1,5 @@
-/* FAST App — Crypto Glow */
+/* DIBLOWCLOUD Checker */
 .App {
   min-height: 100vh;
-  background-color: #060612;
+  background-color: #05050A;
 }
-.drop-zone { transition: all 0.2s ease; }
-.drop-zone.drag-over {
-  border-color: #00e5ff;
-  background-color: rgba(0,229,255,0.06);
-}
-.status-found { color: #00ff88; }
-.status-not-found { color: #ff3060; }
-.status-pending { color: #ffb020; }
-@keyframes fadeIn {
-  from { opacity: 0; transform: translateY(6px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-.fade-in { animation: fadeIn 0.25s ease-out; }
