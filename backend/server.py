@@ -21,9 +21,9 @@ import json
 import gc
 
 
-# Auto-threading configuration — MAXIMUM SPEED
+# Auto-threading configuration — OPTIMIZED FOR AMAZON (avoid rate limiting)
 class ThreadConfig:
-    """Max concurrency: push threads to the absolute limit for real speed."""
+    """Concurrency optimized to avoid rate limiting on Amazon."""
     
     def __init__(self):
         self._cpu_count = multiprocessing.cpu_count()
@@ -40,28 +40,30 @@ class ThreadConfig:
     def max_concurrent_identifiers(self) -> int:
         if self._override_identifiers:
             return self._override_identifiers
-        base = max(self._cpu_count * 8, 50)
+        # Reduced for Amazon rate limiting
+        base = max(self._cpu_count * 2, 10)
         if self.active_proxy_count > 0:
-            base = min(base + self.active_proxy_count * 10, 500)
+            base = min(base + self.active_proxy_count * 5, 100)
         return base
     
     def dynamic_concurrent_identifiers(self, total: int) -> int:
-        """Scale concurrency to match workload — no holding back"""
+        """Scale concurrency - reduced to avoid Amazon rate limiting"""
         if self._override_identifiers:
             return self._override_identifiers
         proxies = self.active_proxy_count
+        # Much lower concurrency to avoid rate limiting
         if total <= 10:
             return total
         elif total <= 50:
-            return 50 if proxies > 0 else 40
+            return 10 if proxies > 0 else 5
         elif total <= 100:
-            return 100 if proxies > 0 else 80
+            return 20 if proxies > 0 else 10
         elif total <= 500:
-            return 200 if proxies > 0 else 150
+            return 30 if proxies > 0 else 15
         elif total <= 2000:
-            return 300 if proxies > 0 else 200
+            return 40 if proxies > 0 else 20
         else:
-            return 500 if proxies > 0 else 300
+            return 50 if proxies > 0 else 25
     
     @property
     def max_concurrent_platforms(self) -> int:
@@ -1151,6 +1153,9 @@ async def check_holehe_platform(email: str, platform_name: str, client: httpx.As
         module_info = HOLEHE_MODULES.get(platform_name)
         if not module_info:
             return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
+        
+        # Add random delay to avoid rate limiting (especially for Amazon)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
         
         out = []
         await module_info["func"](email, client, out)
