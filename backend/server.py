@@ -1312,7 +1312,7 @@ async def verify_phone(phone: str, platforms_filter: Optional[List[str]] = None)
 
 
 async def verify_identifier(identifier: str, platforms_filter: Optional[List[str]] = None) -> Optional[VerificationResult]:
-    identifier = identifier.strip()
+    identifier = clean_identifier(identifier)
     if not identifier:
         return None
     
@@ -1326,8 +1326,23 @@ async def verify_identifier(identifier: str, platforms_filter: Optional[List[str
         return None
 
 
-def detect_identifier_type(identifier: str) -> str:
+def clean_identifier(identifier: str) -> str:
+    """Extract clean email or phone from formats like email:password or email|password"""
     identifier = identifier.strip()
+    
+    # Handle combo formats: email:password, email|password, email;password
+    for separator in [':', '|', ';']:
+        if separator in identifier:
+            parts = identifier.split(separator)
+            # Take the first part (should be email or phone)
+            identifier = parts[0].strip()
+            break
+    
+    return identifier
+
+
+def detect_identifier_type(identifier: str) -> str:
+    identifier = clean_identifier(identifier)
     if "@" in identifier and "." in identifier:
         return "email"
     digits = sum(c.isdigit() for c in identifier)
@@ -1344,8 +1359,9 @@ def parse_file_content(content: str) -> List[str]:
         for row in reader:
             for cell in row:
                 cell = cell.strip()
-                if cell and (detect_identifier_type(cell) in ["email", "phone"]):
-                    identifiers.append(cell)
+                cleaned = clean_identifier(cell)
+                if cleaned and (detect_identifier_type(cell) in ["email", "phone"]):
+                    identifiers.append(cleaned)
     except Exception:
         pass
     
@@ -1353,8 +1369,9 @@ def parse_file_content(content: str) -> List[str]:
         for line in content.split('\n'):
             for item in line.replace(',', '\n').replace(';', '\n').replace('\t', '\n').split('\n'):
                 item = item.strip()
-                if item and (detect_identifier_type(item) in ["email", "phone"]):
-                    identifiers.append(item)
+                cleaned = clean_identifier(item)
+                if cleaned and (detect_identifier_type(item) in ["email", "phone"]):
+                    identifiers.append(cleaned)
     
     seen = set()
     unique = []
