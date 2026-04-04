@@ -18,10 +18,9 @@ import httpx
 import multiprocessing
 
 
-# Auto-threading configuration — aggressive scaling
+# Auto-threading configuration — MAXIMUM SPEED
 class ThreadConfig:
-    """Auto-detects and manages optimal concurrency settings based on workload.
-    Scales aggressively: more emails = more threads."""
+    """Max concurrency: push threads to the absolute limit for real speed."""
     
     def __init__(self):
         self._cpu_count = multiprocessing.cpu_count()
@@ -38,58 +37,59 @@ class ThreadConfig:
     def max_concurrent_identifiers(self) -> int:
         if self._override_identifiers:
             return self._override_identifiers
-        # Aggressive scaling: base 20, scale up with proxies
-        base = max(self._cpu_count * 4, 20)
+        base = max(self._cpu_count * 8, 50)
         if self.active_proxy_count > 0:
-            base = min(base + self.active_proxy_count * 5, 100)
+            base = min(base + self.active_proxy_count * 10, 500)
         return base
     
     def dynamic_concurrent_identifiers(self, total: int) -> int:
-        """Scale concurrency based on actual workload size"""
+        """Scale concurrency to match workload — no holding back"""
         if self._override_identifiers:
             return self._override_identifiers
         proxies = self.active_proxy_count
         if total <= 10:
-            return max(total, 5)
+            return total
         elif total <= 50:
-            return 25 if proxies > 0 else 20
+            return 50 if proxies > 0 else 40
         elif total <= 100:
-            return 50 if proxies > 0 else 30
+            return 100 if proxies > 0 else 80
         elif total <= 500:
-            return 80 if proxies > 0 else 50
+            return 200 if proxies > 0 else 150
+        elif total <= 2000:
+            return 300 if proxies > 0 else 200
         else:
-            return 100 if proxies > 0 else 60
+            return 500 if proxies > 0 else 300
     
     @property
     def max_concurrent_platforms(self) -> int:
         if self._override_platforms:
             return self._override_platforms
         if self.active_proxy_count == 0:
-            return 40
-        return min(40 + self.active_proxy_count * 10, 100)
+            return 60
+        return min(60 + self.active_proxy_count * 15, 200)
     
     def recommended_batch_size(self, total_identifiers: int) -> int:
-        """Return optimal batch size — aggressive: bigger batches for more throughput"""
+        """Batch size = send as many as possible per request"""
         proxies = self.active_proxy_count
         
-        if total_identifiers <= 10:
+        if total_identifiers <= 20:
             return total_identifiers
-        elif total_identifiers <= 30:
-            return 15 if proxies > 0 else 10
+        elif total_identifiers <= 50:
+            return total_identifiers
         elif total_identifiers <= 100:
-            return 30 if proxies > 0 else 25
-        elif total_identifiers <= 300:
             return 50 if proxies > 0 else 40
-        elif total_identifiers <= 1000:
-            return 80 if proxies > 0 else 60
-        else:
+        elif total_identifiers <= 300:
             return 100 if proxies > 0 else 80
+        elif total_identifiers <= 1000:
+            return 150 if proxies > 0 else 100
+        else:
+            return 200 if proxies > 0 else 150
     
     def set_max_identifiers(self, count: int):
-        self._override_identifiers = max(1, min(100, count))
+        self._override_identifiers = max(1, min(500, count))
     
     def set_max_platforms(self, count: int):
-        self._override_platforms = max(5, min(100, count))
+        self._override_platforms = max(5, min(200, count))
     
     def reset(self):
         self._override_identifiers = None

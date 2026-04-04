@@ -4,32 +4,32 @@ export default function StatsBar({ stats }) {
   return (
     <div className="flex flex-wrap gap-5" data-testid="stats-bar">
       <div className="flex items-center gap-2">
-        <div className="w-7 h-7 rounded-md bg-[#00d4ff]/[0.08] flex items-center justify-center">
-          <Users className="w-3.5 h-3.5 text-[#00d4ff]" />
+        <div className="w-7 h-7 rounded-md bg-[#00e5ff]/[0.08] flex items-center justify-center" style={{boxShadow:'0 0 12px rgba(0,229,255,0.1)'}}>
+          <Users className="w-3.5 h-3.5 text-[#00e5ff]" />
         </div>
         <div>
-          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Total</p>
+          <p className="text-[10px] text-[#44445e] uppercase tracking-wider">Total</p>
           <p className="text-base font-semibold text-white font-mono leading-none">{stats.total}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="w-7 h-7 rounded-md bg-[#00ff88]/[0.08] flex items-center justify-center">
+        <div className="w-7 h-7 rounded-md bg-[#00ff88]/[0.08] flex items-center justify-center" style={{boxShadow:'0 0 12px rgba(0,255,136,0.1)'}}>
           <CheckCircle className="w-3.5 h-3.5 text-[#00ff88]" />
         </div>
         <div>
-          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Trouvés</p>
-          <p className="text-base font-semibold text-[#00ff88] font-mono leading-none">{stats.found}</p>
+          <p className="text-[10px] text-[#44445e] uppercase tracking-wider">Trouvés</p>
+          <p className="text-base font-semibold neon-green font-mono leading-none">{stats.found}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="w-7 h-7 rounded-md bg-[#ff3860]/[0.08] flex items-center justify-center">
-          <XCircle className="w-3.5 h-3.5 text-[#ff3860]" />
+        <div className="w-7 h-7 rounded-md bg-[#ff3060]/[0.08] flex items-center justify-center" style={{boxShadow:'0 0 12px rgba(255,48,96,0.08)'}}>
+          <XCircle className="w-3.5 h-3.5 text-[#ff3060]" />
         </div>
         <div>
-          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Non trouvés</p>
-          <p className="text-base font-semibold text-[#ff3860] font-mono leading-none">{stats.notFound}</p>
+          <p className="text-[10px] text-[#44445e] uppercase tracking-wider">Non trouvés</p>
+          <p className="text-base font-semibold text-[#ff3060] font-mono leading-none">{stats.notFound}</p>
         </div>
       </div>
 
@@ -39,7 +39,7 @@ export default function StatsBar({ stats }) {
             <ShieldAlert className="w-3.5 h-3.5 text-[#ffb020]" />
           </div>
           <div>
-            <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Non vérifiables</p>
+            <p className="text-[10px] text-[#44445e] uppercase tracking-wider">Non vérifiables</p>
             <p className="text-base font-semibold text-[#ffb020] font-mono leading-none">{stats.unverifiable}</p>
           </div>
         </div>
@@ -51,7 +51,7 @@ export default function StatsBar({ stats }) {
             <AlertCircle className="w-3.5 h-3.5 text-orange-400" />
           </div>
           <div>
-            <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Limités</p>
+            <p className="text-[10px] text-[#44445e] uppercase tracking-wider">Limités</p>
             <p className="text-base font-semibold text-orange-400 font-mono leading-none">{stats.rateLimited}</p>
           </div>
         </div>

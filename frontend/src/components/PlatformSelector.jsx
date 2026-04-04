@@ -22,18 +22,8 @@ const PLATFORM_LABELS = {
 function MiniPlatformLogo({ name, size = 14 }) {
   const logo = platformLogos[name];
   const color = getPlatformColor(name);
-  if (logo) {
-    return (
-      <div className="flex items-center justify-center flex-shrink-0 opacity-80"
-        style={{ width: size, height: size, color: color }}>
-        {logo}
-      </div>
-    );
-  }
-  return (
-    <div className="rounded-full flex-shrink-0"
-      style={{ width: size - 4, height: size - 4, backgroundColor: color, opacity: 0.7 }} />
-  );
+  if (logo) return <div className="flex items-center justify-center flex-shrink-0" style={{ width: size, height: size, color, filter: `drop-shadow(0 0 3px ${color}50)` }}>{logo}</div>;
+  return <div className="rounded-full flex-shrink-0" style={{ width: size - 4, height: size - 4, backgroundColor: color, boxShadow: `0 0 6px ${color}40` }} />;
 }
 
 export default function PlatformSelector({ selectedPlatforms, onSelectionChange, disabled }) {
@@ -43,152 +33,75 @@ export default function PlatformSelector({ selectedPlatforms, onSelectionChange,
 
   useEffect(() => {
     const fetchPlatforms = async () => {
-      try {
-        const resp = await axios.get(`${API}/platforms`);
-        setPlatforms(resp.data.platforms);
-      } catch (e) {
-        console.error("Failed to fetch platforms:", e);
-      } finally {
-        setLoading(false);
-      }
+      try { const resp = await axios.get(`${API}/platforms`); setPlatforms(resp.data.platforms); } catch (e) {}
+      finally { setLoading(false); }
     };
     fetchPlatforms();
   }, []);
 
   const isAllSelected = selectedPlatforms.length === 0;
-
-  const togglePlatform = (platformName) => {
-    if (selectedPlatforms.includes(platformName)) {
-      onSelectionChange(selectedPlatforms.filter(p => p !== platformName));
-    } else {
-      onSelectionChange([...selectedPlatforms, platformName]);
-    }
+  const togglePlatform = (name) => {
+    if (selectedPlatforms.includes(name)) onSelectionChange(selectedPlatforms.filter(p => p !== name));
+    else onSelectionChange([...selectedPlatforms, name]);
   };
+  const formatLabel = (name) => PLATFORM_LABELS[name] || name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' ');
 
-  const selectAll = () => onSelectionChange([]);
-  const clearSelection = () => onSelectionChange([]);
-
-  const formatLabel = (name) => {
-    return PLATFORM_LABELS[name] || name.charAt(0).toUpperCase() + name.slice(1).replace(/_/g, ' ');
-  };
-
-  if (loading) {
-    return (
-      <div className="mb-4 p-3 rounded-lg border border-white/[0.06] bg-white/[0.02]">
-        <div className="flex items-center gap-2">
-          <Filter className="w-3.5 h-3.5 text-[#55556a]" />
-          <span className="text-[#55556a] text-xs">Chargement...</span>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div className="mb-4 p-3 rounded-lg border border-white/[0.04] bg-[#0c0c1d]"><span className="text-[#44445e] text-xs">Chargement...</span></div>;
 
   return (
     <div className="mb-4">
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        disabled={disabled}
-        className={`
-          w-full p-3 rounded-lg border transition-all flex items-center justify-between
-          ${isOpen ? 'border-[#00d4ff]/30 bg-[#00d4ff]/[0.04]' : 'border-white/[0.06] bg-white/[0.02] hover:border-white/[0.1]'}
-          ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}
-        `}
-      >
+      <button onClick={() => setIsOpen(!isOpen)} disabled={disabled}
+        className={`w-full p-3 rounded-lg border transition-all flex items-center justify-between ${isOpen ? 'border-[#00e5ff]/20 bg-[#00e5ff]/[0.03]' : 'border-white/[0.05] bg-[#0c0c1d] hover:border-white/[0.08]'} ${disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}
+        style={isOpen ? {boxShadow:'0 0 20px rgba(0,229,255,0.04)'} : {}}>
         <div className="flex items-center gap-2.5">
-          <Filter className={`w-4 h-4 ${isOpen ? 'text-[#00d4ff]' : 'text-[#55556a]'}`} />
-          <span className="text-white text-sm">
-            {isAllSelected ? "Toutes les plateformes" : `${selectedPlatforms.length} sélectionnée(s)`}
-          </span>
+          <Filter className={`w-4 h-4 ${isOpen ? 'text-[#00e5ff]' : 'text-[#44445e]'}`} />
+          <span className="text-white text-sm">{isAllSelected ? "Toutes les plateformes" : `${selectedPlatforms.length} sélectionnée(s)`}</span>
         </div>
-
         {!isAllSelected && selectedPlatforms.length > 0 && selectedPlatforms.length <= 8 && (
-          <div className="flex gap-1 items-center">
-            {selectedPlatforms.map(p => <MiniPlatformLogo key={p} name={p} size={14} />)}
-          </div>
+          <div className="flex gap-1 items-center">{selectedPlatforms.map(p => <MiniPlatformLogo key={p} name={p} size={14} />)}</div>
         )}
-
-        <svg
-          className={`w-4 h-4 text-[#55556a] transition-transform ${isOpen ? 'rotate-180' : ''}`}
-          viewBox="0 0 20 20" fill="currentColor">
+        <svg className={`w-4 h-4 text-[#44445e] transition-transform ${isOpen ? 'rotate-180' : ''}`} viewBox="0 0 20 20" fill="currentColor">
           <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
         </svg>
       </button>
 
       {isOpen && (
-        <div className="mt-1.5 p-4 rounded-lg border border-white/[0.06] bg-[#0e0e1a]">
-          {/* Actions */}
+        <div className="mt-1.5 p-4 rounded-lg border border-white/[0.05] bg-[#0a0a1a]" style={{boxShadow:'0 0 30px rgba(0,229,255,0.03)'}}>
           <div className="flex gap-2 mb-4">
-            <Button
-              size="sm"
-              variant={isAllSelected ? "default" : "outline"}
-              onClick={selectAll}
-              className={isAllSelected
-                ? "bg-[#00d4ff] text-black text-xs h-7"
-                : "border-white/[0.08] text-[#8888a0] bg-transparent hover:text-white text-xs h-7"
-              }
-            >
-              Toutes
-            </Button>
-            {!isAllSelected && (
-              <Button size="sm" variant="outline" onClick={clearSelection}
-                className="border-white/[0.08] text-[#8888a0] bg-transparent hover:text-white text-xs h-7">
-                <X className="w-3 h-3 mr-1" /> Reset
-              </Button>
-            )}
+            <Button size="sm" onClick={() => onSelectionChange([])} className={isAllSelected ? "bg-[#00e5ff] text-[#060612] text-xs h-7 font-semibold btn-glow" : "border-white/[0.06] text-[#7a7a9a] bg-transparent hover:text-white text-xs h-7"} variant={isAllSelected ? "default" : "outline"}>Toutes</Button>
+            {!isAllSelected && <Button size="sm" variant="outline" onClick={() => onSelectionChange([])} className="border-white/[0.06] text-[#7a7a9a] bg-transparent hover:text-white text-xs h-7"><X className="w-3 h-3 mr-1" /> Reset</Button>}
           </div>
 
-          {/* Custom Platforms */}
           <div className="mb-4">
-            <h4 className="text-[10px] text-[#ffb020] mb-2 uppercase tracking-wider font-medium">
-              Proxy requis
-            </h4>
+            <h4 className="text-[10px] text-[#ffb020] mb-2 uppercase tracking-wider font-medium" style={{textShadow:'0 0 8px rgba(255,176,32,0.3)'}}>Proxy requis</h4>
             <div className="flex flex-wrap gap-1.5">
               {platforms.email.filter(p => p.type === 'custom').map((platform) => {
-                const isSelected = selectedPlatforms.includes(platform.name);
+                const sel = selectedPlatforms.includes(platform.name) || isAllSelected;
                 return (
-                  <button
-                    key={platform.name}
-                    onClick={() => togglePlatform(platform.name)}
-                    className={`
-                      px-2.5 py-1.5 rounded-md text-[11px] flex items-center gap-1.5 transition-all
-                      ${isSelected || isAllSelected
-                        ? 'bg-white/[0.08] text-white border border-white/[0.15]'
-                        : 'bg-white/[0.02] text-[#55556a] border border-white/[0.04] hover:border-white/[0.1] hover:text-[#8888a0]'
-                      }
-                    `}
-                  >
+                  <button key={platform.name} onClick={() => togglePlatform(platform.name)}
+                    className={`px-2.5 py-1.5 rounded-md text-[11px] flex items-center gap-1.5 transition-all border ${sel ? 'bg-white/[0.06] text-white border-white/[0.12]' : 'bg-white/[0.02] text-[#44445e] border-white/[0.04] hover:border-white/[0.08] hover:text-[#7a7a9a]'}`}
+                    style={sel ? {boxShadow:`0 0 10px ${getPlatformColor(platform.name)}15`} : {}}>
                     <MiniPlatformLogo name={platform.name} size={14} />
                     {formatLabel(platform.name)}
-                    {(isSelected || isAllSelected) && <Check className="w-3 h-3 text-[#00ff88]" />}
+                    {sel && <Check className="w-3 h-3 text-[#00ff88]" style={{filter:'drop-shadow(0 0 3px rgba(0,255,136,0.5))'}} />}
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Standard Platforms */}
           <div>
-            <h4 className="text-[10px] text-[#00d4ff] mb-2 uppercase tracking-wider font-medium">
-              Standard
-            </h4>
+            <h4 className="text-[10px] text-[#00e5ff] mb-2 uppercase tracking-wider font-medium" style={{textShadow:'0 0 8px rgba(0,229,255,0.3)'}}>Standard</h4>
             <div className="flex flex-wrap gap-1.5 max-h-[220px] overflow-y-auto pr-1">
               {platforms.email.filter(p => p.type === 'holehe').map((platform) => {
-                const isSelected = selectedPlatforms.includes(platform.name);
+                const sel = selectedPlatforms.includes(platform.name) || isAllSelected;
                 return (
-                  <button
-                    key={platform.name}
-                    onClick={() => togglePlatform(platform.name)}
-                    className={`
-                      px-2.5 py-1.5 rounded-md text-[11px] flex items-center gap-1.5 transition-all
-                      ${isSelected || isAllSelected
-                        ? 'bg-white/[0.08] text-white border border-white/[0.15]'
-                        : 'bg-white/[0.02] text-[#55556a] border border-white/[0.04] hover:border-white/[0.1] hover:text-[#8888a0]'
-                      }
-                    `}
-                  >
+                  <button key={platform.name} onClick={() => togglePlatform(platform.name)}
+                    className={`px-2.5 py-1.5 rounded-md text-[11px] flex items-center gap-1.5 transition-all border ${sel ? 'bg-white/[0.06] text-white border-white/[0.12]' : 'bg-white/[0.02] text-[#44445e] border-white/[0.04] hover:border-white/[0.08] hover:text-[#7a7a9a]'}`}
+                    style={sel ? {boxShadow:`0 0 10px ${getPlatformColor(platform.name)}15`} : {}}>
                     <MiniPlatformLogo name={platform.name} size={14} />
                     {formatLabel(platform.name)}
-                    {(isSelected || isAllSelected) && <Check className="w-3 h-3 text-[#00ff88]" />}
+                    {sel && <Check className="w-3 h-3 text-[#00ff88]" style={{filter:'drop-shadow(0 0 3px rgba(0,255,136,0.5))'}} />}
                   </button>
                 );
               })}

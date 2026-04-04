@@ -1,7 +1,7 @@
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Mail, Phone, CheckCircle, XCircle, Loader2, Search, AlertCircle, ShieldAlert,
-  Globe, ShoppingCart, Music, Camera, MessageCircle, Code,
+  Globe, ShoppingCart, Music, MessageCircle, Code,
   Briefcase, Car, Coffee, Calendar, Dumbbell
 } from "lucide-react";
 import { platformLogos, getPlatformColor } from "./PlatformLogos";
@@ -45,97 +45,35 @@ const PLATFORM_CONFIG = {
 };
 
 function getCategoryIcon(category) {
-  switch (category) {
-    case "shopping": return ShoppingCart;
-    case "food": return ShoppingCart;
-    case "social": return MessageCircle;
-    case "music": return Music;
-    case "streaming": return Music;
-    case "dev": return Code;
-    case "email": return Mail;
-    case "software": return Briefcase;
-    case "transport": return Car;
-    case "crowdfunding": return Coffee;
-    case "events": return Calendar;
-    case "sport": return Dumbbell;
-    case "crypto": return Globe;
-    case "payment": return Globe;
-    default: return Globe;
-  }
+  const map = { shopping: ShoppingCart, food: ShoppingCart, social: MessageCircle, music: Music, streaming: Music, dev: Code, email: Mail, software: Briefcase, transport: Car, crowdfunding: Coffee, events: Calendar, sport: Dumbbell, crypto: Globe, payment: Globe };
+  return map[category] || Globe;
 }
 
 function PlatformIcon({ platform, config }) {
   const logo = platformLogos[platform];
   const color = config?.color || getPlatformColor(platform);
-
   if (logo) {
-    return (
-      <div
-        className="w-4 h-4 flex items-center justify-center opacity-80"
-        style={{ color: color }}
-      >
-        {logo}
-      </div>
-    );
+    return <div className="w-4 h-4 flex items-center justify-center" style={{ color, filter: `drop-shadow(0 0 4px ${color}50)` }}>{logo}</div>;
   }
-
   const Icon = getCategoryIcon(config?.category);
-  return <Icon className="w-3.5 h-3.5 opacity-60" style={{ color: color }} />;
+  return <Icon className="w-3.5 h-3.5" style={{ color, filter: `drop-shadow(0 0 3px ${color}40)` }} />;
 }
 
 function StatusBadge({ status }) {
-  if (status === "pending") {
-    return (
-      <div className="flex items-center gap-1 text-[#ffb020]">
-        <Loader2 className="w-3 h-3 animate-spin" />
-        <span className="text-[11px] font-mono">En cours</span>
-      </div>
-    );
-  }
-  if (status === "found") {
-    return (
-      <div className="flex items-center gap-1 text-[#00ff88]">
-        <CheckCircle className="w-3 h-3" />
-        <span className="text-[11px] font-mono">Trouvé</span>
-      </div>
-    );
-  }
-  if (status === "unverifiable") {
-    return (
-      <div className="flex items-center gap-1 text-[#ffb020]">
-        <ShieldAlert className="w-3 h-3" />
-        <span className="text-[11px] font-mono">Non vérifiable</span>
-      </div>
-    );
-  }
-  if (status === "rate_limited") {
-    return (
-      <div className="flex items-center gap-1 text-orange-400">
-        <AlertCircle className="w-3 h-3" />
-        <span className="text-[11px] font-mono">Limité</span>
-      </div>
-    );
-  }
-  if (status === "error") {
-    return (
-      <div className="flex items-center gap-1 text-orange-400">
-        <AlertCircle className="w-3 h-3" />
-        <span className="text-[11px] font-mono">Erreur</span>
-      </div>
-    );
-  }
-  if (status === "not_supported") {
-    return (
-      <div className="flex items-center gap-1 text-[#55556a]">
-        <XCircle className="w-3 h-3" />
-        <span className="text-[11px] font-mono">Non supporté</span>
-      </div>
-    );
-  }
+  const configs = {
+    pending: { color: "text-[#ffb020]", icon: Loader2, label: "En cours", spin: true },
+    found: { color: "text-[#00ff88]", icon: CheckCircle, label: "Trouvé", glow: "drop-shadow(0 0 4px rgba(0,255,136,0.4))" },
+    unverifiable: { color: "text-[#ffb020]", icon: ShieldAlert, label: "N/V" },
+    rate_limited: { color: "text-orange-400", icon: AlertCircle, label: "Limité" },
+    error: { color: "text-orange-400", icon: AlertCircle, label: "Erreur" },
+    not_supported: { color: "text-[#44445e]", icon: XCircle, label: "N/S" },
+  };
+  const cfg = configs[status] || { color: "text-[#ff3060]", icon: XCircle, label: "Non trouvé" };
+  const Icon = cfg.icon;
   return (
-    <div className="flex items-center gap-1 text-[#ff3860]">
-      <XCircle className="w-3 h-3" />
-      <span className="text-[11px] font-mono">Non trouvé</span>
+    <div className={`flex items-center gap-1 ${cfg.color}`}>
+      <Icon className={`w-3 h-3 ${cfg.spin ? 'animate-spin' : ''}`} style={cfg.glow ? {filter: cfg.glow} : {}} />
+      <span className="text-[11px] font-mono">{cfg.label}</span>
     </div>
   );
 }
@@ -146,34 +84,31 @@ function ResultCard({ result, index }) {
   const unverifiableCount = result.platforms.filter((p) => p.status === "unverifiable").length;
   const totalCount = result.platforms.length;
   const verifiedCount = totalCount - unverifiableCount;
+  const hasFound = foundCount > 0;
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
+      initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: index * 0.03, duration: 0.25 }}
+      transition={{ delay: index * 0.02, duration: 0.2 }}
       className="masonry-item"
       data-testid={`result-card-${index}`}
     >
-      <div className="bg-[#111120] border border-white/[0.06] rounded-xl p-4 hover:border-[#00d4ff]/20 transition-all duration-200">
+      <div className={`bg-[#0c0c1d] border rounded-xl p-4 transition-all duration-200 glow-card ${
+        hasFound ? 'border-[#00ff88]/15' : 'border-white/[0.05]'
+      }`}>
         {/* Header */}
         <div className="flex items-start gap-2.5 mb-3 pb-3 border-b border-white/[0.04]">
           <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-            isEmail
-              ? "bg-[#00d4ff]/[0.08] text-[#00d4ff]"
-              : "bg-[#a855f7]/[0.08] text-[#a855f7]"
-          }`}>
+            isEmail ? "bg-[#00e5ff]/[0.08] text-[#00e5ff]" : "bg-[#a855f7]/[0.08] text-[#a855f7]"
+          }`} style={isEmail ? {boxShadow:'0 0 12px rgba(0,229,255,0.08)'} : {boxShadow:'0 0 12px rgba(168,85,247,0.08)'}}>
             {isEmail ? <Mail className="w-4 h-4" /> : <Phone className="w-4 h-4" />}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-white text-sm font-medium truncate font-mono" title={result.identifier}>
-              {result.identifier}
-            </p>
-            <p className="text-[#55556a] text-[11px] mt-0.5">
-              {isEmail ? "Email" : "Tél"} · <span className="text-[#00ff88]">{foundCount}</span>/{verifiedCount}
-              {unverifiableCount > 0 && (
-                <span className="text-[#ffb020]"> · {unverifiableCount} n/v</span>
-              )}
+            <p className="text-white text-sm font-medium truncate font-mono" title={result.identifier}>{result.identifier}</p>
+            <p className="text-[#44445e] text-[11px] mt-0.5">
+              {isEmail ? "Email" : "Tél"} · <span className={foundCount > 0 ? 'neon-green' : 'text-[#ff3060]'}>{foundCount}</span>/{verifiedCount}
+              {unverifiableCount > 0 && <span className="text-[#ffb020]"> · {unverifiableCount} n/v</span>}
             </p>
           </div>
         </div>
@@ -183,22 +118,14 @@ function ResultCard({ result, index }) {
           {result.platforms.map((platform, idx) => {
             const config = PLATFORM_CONFIG[platform.platform];
             return (
-              <div
-                key={platform.platform}
-                className={`flex items-center justify-between py-2 ${
-                  idx < result.platforms.length - 1 ? "border-b border-white/[0.03]" : ""
-                }`}
-                data-testid={`platform-${platform.platform}-${platform.status}`}
-              >
+              <div key={platform.platform}
+                className={`flex items-center justify-between py-2 ${idx < result.platforms.length - 1 ? "border-b border-white/[0.03]" : ""}`}
+                data-testid={`platform-${platform.platform}-${platform.status}`}>
                 <div className="flex items-center gap-2">
                   <PlatformIcon platform={platform.platform} config={config} />
-                  <span className="text-[12px] text-[#8888a0]">
-                    {config?.name || platform.platform}
-                  </span>
+                  <span className="text-[12px] text-[#7a7a9a]">{config?.name || platform.platform}</span>
                   {config?.needsProxy && (
-                    <span className="text-[9px] px-1 py-px rounded bg-[#ffb020]/10 text-[#ffb020]/70 font-mono">
-                      PROXY
-                    </span>
+                    <span className="text-[9px] px-1 py-px rounded bg-[#ffb020]/10 text-[#ffb020]/60 font-mono">PROXY</span>
                   )}
                 </div>
                 <StatusBadge status={platform.status} />
@@ -215,12 +142,10 @@ export default function ResultsGrid({ results, isLoading }) {
   if (results.length === 0 && !isLoading) {
     return (
       <div className="text-center py-16" data-testid="empty-results">
-        <div className="w-14 h-14 rounded-xl bg-white/[0.03] flex items-center justify-center mx-auto mb-3">
-          <Search className="w-7 h-7 text-[#55556a]" />
+        <div className="w-14 h-14 rounded-xl bg-white/[0.02] flex items-center justify-center mx-auto mb-3" style={{boxShadow:'0 0 30px rgba(0,229,255,0.04)'}}>
+          <Search className="w-7 h-7 text-[#44445e]" />
         </div>
-        <p className="text-[#55556a] text-sm">
-          Entrez des emails ou numéros pour vérifier sur 35+ plateformes.
-        </p>
+        <p className="text-[#44445e] text-sm">Entrez des emails ou numéros pour vérifier sur 35+ plateformes.</p>
       </div>
     );
   }
@@ -228,9 +153,7 @@ export default function ResultsGrid({ results, isLoading }) {
   return (
     <div className="masonry-grid" data-testid="results-grid">
       <AnimatePresence mode="popLayout">
-        {results.map((result, index) => (
-          <ResultCard key={result.id} result={result} index={index} />
-        ))}
+        {results.map((result, index) => <ResultCard key={result.id} result={result} index={index} />)}
       </AnimatePresence>
     </div>
   );

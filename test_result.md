@@ -203,21 +203,33 @@ frontend:
     status_history:
         - working: true
         - agent: "main"
-        - comment: "Updated ThreadConfig for aggressive scaling. 10 emails→10 threads, 100→30, 500→50, 1000→60. Batch sizes scale from 10 to 80+. dynamic_concurrent_identifiers() method scales with total workload."
+        - comment: "MAXIMUM threading: 10→10, 100→80, 500→150, 2000→200, 10000→300 concurrent. Batch sizes up to 200. dynamic_concurrent_identifiers() scales with total."
+
+  - task: "Export only valid/found emails"
+    implemented: true
+    working: true
+    file: "frontend/src/pages/HomePage.jsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "CSV and TXT exports now ONLY include identifiers where at least one platform status is 'found'. Non-found are excluded. TXT is a clean list, CSV includes identifier + type + platforms found."
 
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 3
+  test_sequence: 4
   run_ui: false
 
 test_plan:
   current_focus:
-    - "Aggressive auto-threading scaling"
+    - "Maximum auto-threading scaling"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-    - message: "Updated ThreadConfig for aggressive scaling. Test GET /api/config/threads?total=N for various N values (10, 50, 100, 500, 1000). Verify max_concurrent_identifiers and recommended_batch_size scale correctly. Also test POST /api/verify still works with the new dynamic semaphore."
+    - message: "Updated ThreadConfig for MAXIMUM speed. Test GET /api/config/threads?total=N for N=10,100,500,2000,10000. Expected: 10→10, 100→80, 500→150, 2000→200, 10000→300 concurrent identifiers. Batch sizes: 10→10, 100→40, 500→100, 2000→150, 10000→150. Also test POST /api/verify still works."

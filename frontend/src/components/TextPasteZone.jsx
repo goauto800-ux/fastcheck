@@ -8,23 +8,16 @@ export default function TextPasteZone({ onVerify, disabled }) {
 
   const parseIdentifiers = useCallback((input) => {
     if (!input.trim()) return [];
-    const items = input
-      .split(/[\n,;\t\s]+/)
-      .map((item) => item.trim())
-      .filter((item) => {
-        if (item.includes("@")) return true;
-        const digits = (item.match(/\d/g) || []).length;
-        return digits >= 8;
-      });
+    const items = input.split(/[\n,;\t\s]+/).map((item) => item.trim()).filter((item) => {
+      if (item.includes("@")) return true;
+      return (item.match(/\d/g) || []).length >= 8;
+    });
     return [...new Set(items)];
   }, []);
 
   const handleVerify = useCallback(() => {
     const identifiers = parseIdentifiers(text);
-    if (identifiers.length === 0) {
-      toast.error("Aucun email ou numéro valide détecté");
-      return;
-    }
+    if (identifiers.length === 0) { toast.error("Aucun email ou numéro valide détecté"); return; }
     onVerify(identifiers);
   }, [text, parseIdentifiers, onVerify]);
 
@@ -33,19 +26,15 @@ export default function TextPasteZone({ onVerify, disabled }) {
       const clipboardText = await navigator.clipboard.readText();
       setText((prev) => (prev ? prev + "\n" + clipboardText : clipboardText));
       toast.success("Contenu collé");
-    } catch (err) {
-      toast.error("Impossible d'accéder au presse-papiers");
-    }
+    } catch (err) { toast.error("Impossible d'accéder au presse-papiers"); }
   }, []);
-
-  const handleClear = useCallback(() => { setText(""); }, []);
 
   const identifierCount = parseIdentifiers(text).length;
 
   return (
     <div className="h-full">
       <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
-        <Terminal className="w-4 h-4 text-[#a855f7]" />
+        <Terminal className="w-4 h-4 text-[#a855f7]" style={{filter:'drop-shadow(0 0 4px rgba(168,85,247,0.4))'}} />
         Coller du Texte
       </h3>
 
@@ -57,57 +46,36 @@ export default function TextPasteZone({ onVerify, disabled }) {
           disabled={disabled}
           className={`
             w-full h-[260px] rounded-xl p-4 font-mono text-sm resize-none
-            bg-[#0e0e1a] border border-white/[0.08] text-[#00d4ff]/80
-            placeholder:text-[#33334a]
-            focus:outline-none focus:border-[#00d4ff]/30 focus:ring-1 focus:ring-[#00d4ff]/10
+            bg-[#0c0c1d] border border-white/[0.06] text-[#00e5ff]/70
+            placeholder:text-[#2a2a40]
+            focus:outline-none focus:border-[#00e5ff]/25
             transition-all duration-200
             ${disabled ? "opacity-40 cursor-not-allowed" : ""}
           `}
+          style={{boxShadow:'inset 0 0 30px rgba(0,229,255,0.02)'}}
           data-testid="text-input"
         />
 
-        {/* Count */}
-        <div className="absolute bottom-3 left-4 text-[11px] text-[#55556a]">
-          {identifierCount > 0 && (
-            <span className="text-[#00d4ff]/60">{identifierCount} détecté(s)</span>
-          )}
+        <div className="absolute bottom-3 left-4 text-[11px] text-[#44445e]">
+          {identifierCount > 0 && <span className="text-[#00e5ff]/50">{identifierCount} détecté(s)</span>}
         </div>
 
-        {/* Paste button */}
-        <button
-          onClick={handlePaste}
-          disabled={disabled}
-          className="absolute top-3 right-3 p-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[#55556a] hover:text-white transition-all"
-          title="Coller"
-          data-testid="paste-btn"
-        >
+        <button onClick={handlePaste} disabled={disabled}
+          className="absolute top-3 right-3 p-1.5 rounded-md bg-white/[0.03] hover:bg-white/[0.06] text-[#44445e] hover:text-white transition-all" title="Coller" data-testid="paste-btn">
           <Clipboard className="w-3.5 h-3.5" />
         </button>
       </div>
 
-      {/* Actions */}
       <div className="flex gap-2 mt-3 justify-end">
         {text && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleClear}
-            disabled={disabled}
-            className="border-white/[0.08] text-[#8888a0] hover:text-white bg-transparent text-xs h-8"
-            data-testid="clear-text-btn"
-          >
+          <Button variant="outline" size="sm" onClick={() => setText("")} disabled={disabled}
+            className="border-white/[0.06] text-[#7a7a9a] hover:text-white bg-transparent text-xs h-8" data-testid="clear-text-btn">
             Effacer
           </Button>
         )}
-        <Button
-          size="sm"
-          onClick={handleVerify}
-          disabled={disabled || !text.trim()}
-          className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 text-xs h-8 px-5 font-semibold btn-glow"
-          data-testid="verify-submit-btn"
-        >
-          <Zap className="w-3.5 h-3.5 mr-1.5" />
-          Vérifier
+        <Button size="sm" onClick={handleVerify} disabled={disabled || !text.trim()}
+          className="bg-[#00e5ff] text-[#060612] hover:bg-[#00e5ff]/90 text-xs h-8 px-5 font-semibold btn-glow" data-testid="verify-submit-btn">
+          <Zap className="w-3.5 h-3.5 mr-1.5" style={{filter:'drop-shadow(0 0 3px rgba(0,229,255,0.5))'}} /> Vérifier
         </Button>
       </div>
     </div>
