@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from "react";
-import { motion } from "framer-motion";
 import { UploadCloud, FileText, X } from "lucide-react";
 import { Button } from "./ui/button";
 
@@ -22,56 +21,46 @@ export default function UploadZone({ onFileUpload, disabled }) {
     e.preventDefault();
     setIsDragging(false);
     if (disabled) return;
-
     const file = e.dataTransfer.files[0];
-    if (file) {
-      setSelectedFile(file);
-    }
+    if (file) setSelectedFile(file);
   }, [disabled]);
 
   const handleFileSelect = useCallback((e) => {
     const file = e.target.files?.[0];
-    if (file) {
-      setSelectedFile(file);
-    }
+    if (file) setSelectedFile(file);
   }, []);
 
   const handleUpload = useCallback(() => {
-    if (selectedFile && onFileUpload) {
-      onFileUpload(selectedFile);
-    }
+    if (selectedFile && onFileUpload) onFileUpload(selectedFile);
   }, [selectedFile, onFileUpload]);
 
   const handleClearFile = useCallback(() => {
     setSelectedFile(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = "";
-    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   }, []);
 
   return (
     <div className="h-full">
-      <h3 className="text-lg font-semibold text-white mb-4 font-heading flex items-center gap-2">
-        <UploadCloud className="w-5 h-5 text-blue-400" />
+      <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+        <UploadCloud className="w-4 h-4 text-[#00d4ff]" />
         Upload Fichier
       </h3>
 
-      <motion.div
+      <div
         className={`
-          relative border-2 border-dashed rounded-2xl p-8 sm:p-12
-          flex flex-col items-center justify-center min-h-[280px]
-          transition-all duration-300 cursor-pointer
-          ${isDragging 
-            ? "border-blue-500 bg-blue-500/10" 
-            : "border-blue-500/30 bg-blue-500/5 hover:bg-blue-500/10 hover:border-blue-500/50"
+          relative border border-dashed rounded-xl p-8 sm:p-10
+          flex flex-col items-center justify-center min-h-[260px]
+          transition-all duration-200 cursor-pointer
+          ${isDragging
+            ? "border-[#00d4ff] bg-[#00d4ff]/[0.06]"
+            : "border-white/[0.1] bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/[0.15]"
           }
-          ${disabled ? "opacity-50 cursor-not-allowed" : ""}
+          ${disabled ? "opacity-40 cursor-not-allowed" : ""}
         `}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !disabled && !selectedFile && fileInputRef.current?.click()}
-        whileHover={!disabled && !selectedFile ? { scale: 1.01 } : {}}
         data-testid="upload-dropzone"
       >
         <input
@@ -85,72 +74,58 @@ export default function UploadZone({ onFileUpload, disabled }) {
         />
 
         {selectedFile ? (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="text-center"
-          >
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/20 to-purple-500/20 flex items-center justify-center mx-auto mb-4 border border-white/10">
-              <FileText className="w-8 h-8 text-blue-400" />
+          <div className="text-center">
+            <div className="w-12 h-12 rounded-xl bg-[#00d4ff]/[0.08] flex items-center justify-center mx-auto mb-3 border border-[#00d4ff]/20">
+              <FileText className="w-6 h-6 text-[#00d4ff]" />
             </div>
-            <p className="text-white font-medium mb-1 font-mono text-sm truncate max-w-[200px]">
+            <p className="text-white font-medium mb-0.5 text-sm truncate max-w-[200px] font-mono">
               {selectedFile.name}
             </p>
-            <p className="text-slate-500 text-xs font-mono mb-4">
+            <p className="text-[#55556a] text-xs font-mono mb-4">
               {(selectedFile.size / 1024).toFixed(1)} KB
             </p>
-            <div className="flex gap-3 justify-center">
+            <div className="flex gap-2 justify-center">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleClearFile();
-                }}
+                onClick={(e) => { e.stopPropagation(); handleClearFile(); }}
                 disabled={disabled}
-                className="border-white/10 text-slate-400 hover:text-white bg-transparent"
+                className="border-white/[0.08] text-[#8888a0] hover:text-white bg-transparent text-xs h-8"
                 data-testid="clear-file-btn"
               >
-                <X className="w-4 h-4 mr-1" />
+                <X className="w-3.5 h-3.5 mr-1" />
                 Annuler
               </Button>
               <Button
                 size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleUpload();
-                }}
+                onClick={(e) => { e.stopPropagation(); handleUpload(); }}
                 disabled={disabled}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 btn-glow"
+                className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 text-xs h-8 font-semibold"
                 data-testid="upload-submit-btn"
               >
-                <UploadCloud className="w-4 h-4 mr-1" />
+                <UploadCloud className="w-3.5 h-3.5 mr-1" />
                 Vérifier
               </Button>
             </div>
-          </motion.div>
+          </div>
         ) : (
           <>
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center mb-4 border border-white/5">
-              <UploadCloud className="w-8 h-8 text-blue-400" />
+            <div className="w-12 h-12 rounded-xl bg-white/[0.03] flex items-center justify-center mb-3 border border-white/[0.06]">
+              <UploadCloud className="w-6 h-6 text-[#55556a]" />
             </div>
-            <p className="text-slate-300 font-medium mb-2 text-center">
+            <p className="text-[#8888a0] text-sm font-medium mb-1 text-center">
               Glissez votre fichier ici
             </p>
-            <p className="text-slate-500 text-xs font-mono text-center mb-4">
+            <p className="text-[#55556a] text-xs text-center mb-3">
               ou cliquez pour parcourir
             </p>
-            <div className="flex flex-wrap gap-2 justify-center">
-              <span className="px-2 py-1 rounded-md bg-white/5 text-xs font-mono text-slate-400">
-                .csv
-              </span>
-              <span className="px-2 py-1 rounded-md bg-white/5 text-xs font-mono text-slate-400">
-                .txt
-              </span>
+            <div className="flex gap-2 justify-center">
+              <span className="px-2 py-0.5 rounded bg-white/[0.04] text-[10px] font-mono text-[#55556a]">.csv</span>
+              <span className="px-2 py-0.5 rounded bg-white/[0.04] text-[10px] font-mono text-[#55556a]">.txt</span>
             </div>
           </>
         )}
-      </motion.div>
+      </div>
     </div>
   );
 }

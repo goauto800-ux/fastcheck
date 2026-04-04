@@ -5,20 +5,21 @@ import HomePage from "./pages/HomePage";
 
 function App() {
   return (
-    <div className="App min-h-screen bg-[#05030A]">
+    <div className="App min-h-screen bg-[#080810]">
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<HomePage />} />
         </Routes>
       </BrowserRouter>
-      <Toaster 
-        position="bottom-right" 
+      <Toaster
+        position="bottom-right"
         theme="dark"
         toastOptions={{
           style: {
-            background: '#0F0B1A',
-            border: '1px solid rgba(139, 92, 246, 0.3)',
-            color: '#F8FAFC',
+            background: '#111120',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: '#e8e8f0',
+            fontFamily: 'Inter, sans-serif',
           },
         }}
       />

@@ -18,9 +18,10 @@ import httpx
 import multiprocessing
 
 
-# Auto-threading configuration
+# Auto-threading configuration — aggressive scaling
 class ThreadConfig:
-    """Auto-detects and manages optimal concurrency settings based on workload"""
+    """Auto-detects and manages optimal concurrency settings based on workload.
+    Scales aggressively: more emails = more threads."""
     
     def __init__(self):
         self._cpu_count = multiprocessing.cpu_count()
@@ -37,56 +38,70 @@ class ThreadConfig:
     def max_concurrent_identifiers(self) -> int:
         if self._override_identifiers:
             return self._override_identifiers
-        # Adapt based on CPU and proxies
-        base = min(self._cpu_count * 2, 10)
+        # Aggressive scaling: base 20, scale up with proxies
+        base = max(self._cpu_count * 4, 20)
         if self.active_proxy_count > 0:
-            # With proxies, we can be more aggressive
-            base = min(base + self.active_proxy_count * 2, 20)
-        return max(3, base)
+            base = min(base + self.active_proxy_count * 5, 100)
+        return base
+    
+    def dynamic_concurrent_identifiers(self, total: int) -> int:
+        """Scale concurrency based on actual workload size"""
+        if self._override_identifiers:
+            return self._override_identifiers
+        proxies = self.active_proxy_count
+        if total <= 10:
+            return max(total, 5)
+        elif total <= 50:
+            return 25 if proxies > 0 else 20
+        elif total <= 100:
+            return 50 if proxies > 0 else 30
+        elif total <= 500:
+            return 80 if proxies > 0 else 50
+        else:
+            return 100 if proxies > 0 else 60
     
     @property
     def max_concurrent_platforms(self) -> int:
         if self._override_platforms:
             return self._override_platforms
-        # Without proxies, custom platform checks fail anyway so fewer concurrent
         if self.active_proxy_count == 0:
-            return 30
-        # With proxies, go faster
-        return min(30 + self.active_proxy_count * 10, 80)
+            return 40
+        return min(40 + self.active_proxy_count * 10, 100)
     
     def recommended_batch_size(self, total_identifiers: int) -> int:
-        """Return optimal batch size for frontend based on total workload"""
+        """Return optimal batch size — aggressive: bigger batches for more throughput"""
         proxies = self.active_proxy_count
         
-        if total_identifiers <= 5:
-            return total_identifiers  # Small batch, send all at once
-        elif total_identifiers <= 20:
-            return 5
-        elif total_identifiers <= 50:
-            return 8 if proxies > 0 else 5
-        elif total_identifiers <= 200:
-            return 10 if proxies > 0 else 8
-        else:
-            # Large workloads
+        if total_identifiers <= 10:
+            return total_identifiers
+        elif total_identifiers <= 30:
             return 15 if proxies > 0 else 10
+        elif total_identifiers <= 100:
+            return 30 if proxies > 0 else 25
+        elif total_identifiers <= 300:
+            return 50 if proxies > 0 else 40
+        elif total_identifiers <= 1000:
+            return 80 if proxies > 0 else 60
+        else:
+            return 100 if proxies > 0 else 80
     
     def set_max_identifiers(self, count: int):
-        self._override_identifiers = max(1, min(30, count))
+        self._override_identifiers = max(1, min(100, count))
     
     def set_max_platforms(self, count: int):
-        self._override_platforms = max(5, min(80, count))
+        self._override_platforms = max(5, min(100, count))
     
     def reset(self):
         self._override_identifiers = None
         self._override_platforms = None
     
-    def get_info(self) -> dict:
+    def get_info(self, total: int = 50) -> dict:
         return {
-            "max_concurrent_identifiers": self.max_concurrent_identifiers,
+            "max_concurrent_identifiers": self.dynamic_concurrent_identifiers(total),
             "max_concurrent_platforms": self.max_concurrent_platforms,
             "cpu_count": self._cpu_count,
             "active_proxies": self.active_proxy_count,
-            "recommended_batch_size": self.recommended_batch_size(50),
+            "recommended_batch_size": self.recommended_batch_size(total),
             "mode": "auto" if not self._override_identifiers else "manual",
         }
 
@@ -1289,10 +1304,9 @@ async def health_check():
 
 @api_router.get("/config/threads")
 async def get_thread_config(total: Optional[int] = None):
-    """Get auto-threading configuration with recommended batch size"""
-    info = thread_config.get_info()
-    if total is not None and total > 0:
-        info["recommended_batch_size"] = thread_config.recommended_batch_size(total)
+    """Get auto-threading configuration with recommended batch size — scales with total"""
+    t = total if total is not None and total > 0 else 50
+    info = thread_config.get_info(t)
     return info
 
 @api_router.post("/config/threads")
@@ -1413,8 +1427,9 @@ async def verify_identifiers_route(request: VerificationRequest):
     identifiers = request.identifiers  # No limit
     platforms_filter = request.platforms  # Optional platform filter
     
-    # Auto-thread: process multiple identifiers concurrently
-    sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
+    # Auto-thread: process multiple identifiers concurrently — scale with workload
+    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
+    sem = asyncio.Semaphore(concurrency)
     
     async def verify_with_semaphore(identifier):
         async with sem:
@@ -1509,8 +1524,9 @@ async def verify_file(file: UploadFile = File(...)):
     
     identifiers = identifiers  # No limit
     
-    # Auto-thread: process multiple identifiers concurrently
-    sem = asyncio.Semaphore(thread_config.max_concurrent_identifiers)
+    # Auto-thread: process multiple identifiers concurrently — scale with workload
+    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
+    sem = asyncio.Semaphore(concurrency)
     
     async def verify_with_semaphore(identifier):
         async with sem:

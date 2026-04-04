@@ -2,20 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Unbounded:wght@400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
 
 :root {
-  --background: #05030A;
-  --surface: #0F0B1A;
-  --primary: #3B82F6;
-  --secondary: #8B5CF6;
-  --accent: #6366F1;
-  --text-main: #F8FAFC;
-  --text-muted: #94A3B8;
-  --border: rgba(255,255,255,0.08);
-  --success: #34D399;
-  --error: #F43F5E;
-  --pending: #FBBF24;
+  --bg-primary: #080810;
+  --bg-surface: #0e0e1a;
+  --bg-card: #111120;
+  --bg-elevated: #16162a;
+  --cyan: #00d4ff;
+  --cyan-dim: #00d4ff40;
+  --green: #00ff88;
+  --green-dim: #00ff8840;
+  --red: #ff3860;
+  --amber: #ffb020;
+  --text-primary: #e8e8f0;
+  --text-secondary: #8888a0;
+  --text-muted: #55556a;
+  --border: rgba(255,255,255,0.06);
+  --border-hover: rgba(255,255,255,0.12);
 }
 
 * {
@@ -25,16 +29,12 @@
 }
 
 body {
-  font-family: 'JetBrains Mono', monospace;
-  background-color: var(--background);
-  color: var(--text-main);
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   min-height: 100vh;
-}
-
-.font-heading {
-  font-family: 'Unbounded', sans-serif;
 }
 
 .font-mono {
@@ -44,7 +44,7 @@ body {
 /* Masonry layout */
 .masonry-grid {
   columns: 1;
-  gap: 1.5rem;
+  gap: 1rem;
 }
 
 @media (min-width: 640px) {
@@ -67,85 +67,65 @@ body {
 
 .masonry-item {
   break-inside: avoid;
-  margin-bottom: 1.5rem;
+  margin-bottom: 1rem;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--surface);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--secondary);
-  border-radius: 4px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--primary);
+  background: rgba(255,255,255,0.2);
 }
 
-/* Glow effects */
-.glow-blue {
-  box-shadow: 0 0 20px rgba(59, 130, 246, 0.3);
+/* Neon glow utilities */
+.glow-cyan {
+  box-shadow: 0 0 20px rgba(0, 212, 255, 0.15), 0 0 40px rgba(0, 212, 255, 0.05);
 }
 
-.glow-purple {
-  box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+.glow-green {
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.15), 0 0 40px rgba(0, 255, 136, 0.05);
 }
 
-/* Animation keyframes */
-@keyframes pulse-glow {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
+.glow-red {
+  box-shadow: 0 0 20px rgba(255, 56, 96, 0.15);
 }
 
-.animate-pulse-glow {
-  animation: pulse-glow 1.5s ease-in-out infinite;
+/* Progress bar */
+.progress-bar {
+  background: linear-gradient(90deg, #00d4ff, #00ff88);
 }
 
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
+/* Button glow on hover */
+.btn-glow:hover {
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.3);
 }
 
-.shimmer {
-  background: linear-gradient(90deg, transparent, rgba(139, 92, 246, 0.2), transparent);
-  background-size: 200% 100%;
-  animation: shimmer 2s infinite;
+/* Selection */
+::selection {
+  background: rgba(0, 212, 255, 0.3);
+  color: #fff;
 }
 
-/* Gradient text */
-.gradient-text {
-  background: linear-gradient(135deg, #3B82F6 0%, #8B5CF6 50%, #6366F1 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+/* Card base */
+.card-surface {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
-/* Glass effect */
-.glass {
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  background: rgba(15, 11, 26, 0.8);
-}
-
-/* Background pattern */
-.bg-grid {
-  background-image: 
-    linear-gradient(rgba(139, 92, 246, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(139, 92, 246, 0.03) 1px, transparent 1px);
-  background-size: 50px 50px;
+.card-surface:hover {
+  border-color: var(--border-hover);
 }

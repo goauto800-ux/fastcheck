@@ -193,20 +193,31 @@ frontend:
         - agent: "testing"
         - comment: "TESTED: POST /api/parse-file endpoint working perfectly. All 5 test cases passed: (1) Mixed emails/phones - detected 3 emails, 3 phones ✅ (2) CSV emails only - detected 3 emails, 0 phones ✅ (3) Text phones only - detected 0 emails, 4 phones ✅ (4) Empty file - correctly rejected with 400 ✅ (5) Invalid content - correctly rejected with 400 ✅. Endpoint correctly categorizes identifiers, returns proper counts, preview data, and handles error cases as expected."
 
+  - task: "Aggressive auto-threading scaling"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+        - agent: "main"
+        - comment: "Updated ThreadConfig for aggressive scaling. 10 emails→10 threads, 100→30, 500→50, 1000→60. Batch sizes scale from 10 to 80+. dynamic_concurrent_identifiers() method scales with total workload."
+
 metadata:
   created_by: "main_agent"
   version: "1.0"
-  test_sequence: 2
+  test_sequence: 3
   run_ui: false
 
 test_plan:
-  current_focus: []
+  current_focus:
+    - "Aggressive auto-threading scaling"
   stuck_tasks: []
   test_all: false
   test_priority: "high_first"
 
 agent_communication:
     - agent: "main"
-    - message: "Added new feature: file import auto-detection. Backend: POST /api/parse-file accepts file upload and returns {filename, total, emails[], phones[], email_count, phone_count, preview{emails[], phones[]}}. Frontend: FilePreviewModal shows detection results with 3 action buttons (verify emails only, phones only, or all). Test the parse-file endpoint with a file containing mixed emails and phone numbers."
-    - agent: "testing"
-    - message: "COMPLETED: Comprehensive testing of POST /api/parse-file endpoint. All test cases passed successfully: mixed content detection, emails-only files, phones-only files, empty file rejection, and invalid content rejection. The endpoint correctly categorizes identifiers, provides accurate counts, includes preview data, and handles all error cases properly. Backend API is working as specified. Ready for production use."
+    - message: "Updated ThreadConfig for aggressive scaling. Test GET /api/config/threads?total=N for various N values (10, 50, 100, 500, 1000). Verify max_concurrent_identifiers and recommended_batch_size scale correctly. Also test POST /api/verify still works with the new dynamic semaphore."

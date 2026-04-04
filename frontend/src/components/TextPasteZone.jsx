@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { motion } from "framer-motion";
 import { Terminal, Zap, Clipboard } from "lucide-react";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
@@ -9,19 +8,14 @@ export default function TextPasteZone({ onVerify, disabled }) {
 
   const parseIdentifiers = useCallback((input) => {
     if (!input.trim()) return [];
-
-    // Split by newlines, commas, semicolons, spaces, tabs
     const items = input
       .split(/[\n,;\t\s]+/)
       .map((item) => item.trim())
       .filter((item) => {
-        // Check if it looks like an email or phone
         if (item.includes("@")) return true;
         const digits = (item.match(/\d/g) || []).length;
         return digits >= 8;
       });
-
-    // Remove duplicates
     return [...new Set(items)];
   }, []);
 
@@ -38,22 +32,20 @@ export default function TextPasteZone({ onVerify, disabled }) {
     try {
       const clipboardText = await navigator.clipboard.readText();
       setText((prev) => (prev ? prev + "\n" + clipboardText : clipboardText));
-      toast.success("Contenu collé depuis le presse-papiers");
+      toast.success("Contenu collé");
     } catch (err) {
       toast.error("Impossible d'accéder au presse-papiers");
     }
   }, []);
 
-  const handleClear = useCallback(() => {
-    setText("");
-  }, []);
+  const handleClear = useCallback(() => { setText(""); }, []);
 
   const identifierCount = parseIdentifiers(text).length;
 
   return (
     <div className="h-full">
-      <h3 className="text-lg font-semibold text-white mb-4 font-heading flex items-center gap-2">
-        <Terminal className="w-5 h-5 text-purple-400" />
+      <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
+        <Terminal className="w-4 h-4 text-[#a855f7]" />
         Coller du Texte
       </h3>
 
@@ -61,49 +53,47 @@ export default function TextPasteZone({ onVerify, disabled }) {
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          placeholder="Collez vos emails ou numéros ici...&#10;&#10;Exemple:&#10;email@example.com&#10;+33612345678&#10;user@domain.fr"
+          placeholder={"Collez vos emails ou numéros ici...\n\nExemple:\nemail@example.com\n+33612345678\nuser@domain.fr"}
           disabled={disabled}
           className={`
-            w-full h-[280px] rounded-2xl p-6 font-mono text-sm resize-none
-            bg-[#0A0710] border border-white/10 text-blue-300
-            placeholder:text-slate-600
-            focus:outline-none focus:border-blue-500/50 focus:ring-2 focus:ring-blue-500/20
-            transition-all duration-300
-            ${disabled ? "opacity-50 cursor-not-allowed" : ""}
+            w-full h-[260px] rounded-xl p-4 font-mono text-sm resize-none
+            bg-[#0e0e1a] border border-white/[0.08] text-[#00d4ff]/80
+            placeholder:text-[#33334a]
+            focus:outline-none focus:border-[#00d4ff]/30 focus:ring-1 focus:ring-[#00d4ff]/10
+            transition-all duration-200
+            ${disabled ? "opacity-40 cursor-not-allowed" : ""}
           `}
           data-testid="text-input"
         />
 
-        {/* Character count */}
-        <div className="absolute bottom-4 left-6 text-xs font-mono text-slate-600">
+        {/* Count */}
+        <div className="absolute bottom-3 left-4 text-[11px] text-[#55556a]">
           {identifierCount > 0 && (
-            <span className="text-blue-400">{identifierCount} identifiant(s) détecté(s)</span>
+            <span className="text-[#00d4ff]/60">{identifierCount} détecté(s)</span>
           )}
         </div>
 
         {/* Paste button */}
-        <motion.button
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
+        <button
           onClick={handlePaste}
           disabled={disabled}
-          className="absolute top-4 right-4 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white transition-all"
-          title="Coller depuis le presse-papiers"
+          className="absolute top-3 right-3 p-1.5 rounded-md bg-white/[0.04] hover:bg-white/[0.08] text-[#55556a] hover:text-white transition-all"
+          title="Coller"
           data-testid="paste-btn"
         >
-          <Clipboard className="w-4 h-4" />
-        </motion.button>
+          <Clipboard className="w-3.5 h-3.5" />
+        </button>
       </div>
 
       {/* Actions */}
-      <div className="flex gap-3 mt-4 justify-end">
+      <div className="flex gap-2 mt-3 justify-end">
         {text && (
           <Button
             variant="outline"
             size="sm"
             onClick={handleClear}
             disabled={disabled}
-            className="border-white/10 text-slate-400 hover:text-white bg-transparent"
+            className="border-white/[0.08] text-[#8888a0] hover:text-white bg-transparent text-xs h-8"
             data-testid="clear-text-btn"
           >
             Effacer
@@ -113,10 +103,10 @@ export default function TextPasteZone({ onVerify, disabled }) {
           size="sm"
           onClick={handleVerify}
           disabled={disabled || !text.trim()}
-          className="bg-gradient-to-r from-blue-600 to-purple-600 btn-glow px-6"
+          className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 text-xs h-8 px-5 font-semibold btn-glow"
           data-testid="verify-submit-btn"
         >
-          <Zap className="w-4 h-4 mr-2" />
+          <Zap className="w-3.5 h-3.5 mr-1.5" />
           Vérifier
         </Button>
       </div>

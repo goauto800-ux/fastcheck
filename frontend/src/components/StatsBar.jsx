@@ -1,67 +1,61 @@
-import { motion } from "framer-motion";
 import { Users, CheckCircle, XCircle, AlertCircle, ShieldAlert } from "lucide-react";
 
 export default function StatsBar({ stats }) {
   return (
-    <motion.div
-      initial={{ opacity: 0, x: -20 }}
-      animate={{ opacity: 1, x: 0 }}
-      className="flex flex-wrap gap-4 sm:gap-6"
-      data-testid="stats-bar"
-    >
+    <div className="flex flex-wrap gap-5" data-testid="stats-bar">
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
-          <Users className="w-4 h-4 text-blue-400" />
+        <div className="w-7 h-7 rounded-md bg-[#00d4ff]/[0.08] flex items-center justify-center">
+          <Users className="w-3.5 h-3.5 text-[#00d4ff]" />
         </div>
         <div>
-          <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Total</p>
-          <p className="text-lg font-bold text-white font-mono">{stats.total}</p>
+          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Total</p>
+          <p className="text-base font-semibold text-white font-mono leading-none">{stats.total}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 flex items-center justify-center">
-          <CheckCircle className="w-4 h-4 text-emerald-400" />
+        <div className="w-7 h-7 rounded-md bg-[#00ff88]/[0.08] flex items-center justify-center">
+          <CheckCircle className="w-3.5 h-3.5 text-[#00ff88]" />
         </div>
         <div>
-          <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Trouvés</p>
-          <p className="text-lg font-bold text-emerald-400 font-mono">{stats.found}</p>
+          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Trouvés</p>
+          <p className="text-base font-semibold text-[#00ff88] font-mono leading-none">{stats.found}</p>
         </div>
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 rounded-lg bg-rose-500/10 flex items-center justify-center">
-          <XCircle className="w-4 h-4 text-rose-400" />
+        <div className="w-7 h-7 rounded-md bg-[#ff3860]/[0.08] flex items-center justify-center">
+          <XCircle className="w-3.5 h-3.5 text-[#ff3860]" />
         </div>
         <div>
-          <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Non trouvés</p>
-          <p className="text-lg font-bold text-rose-400 font-mono">{stats.notFound}</p>
+          <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Non trouvés</p>
+          <p className="text-base font-semibold text-[#ff3860] font-mono leading-none">{stats.notFound}</p>
         </div>
       </div>
 
       {stats.unverifiable > 0 && (
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-amber-500/10 flex items-center justify-center">
-            <ShieldAlert className="w-4 h-4 text-amber-500" />
+          <div className="w-7 h-7 rounded-md bg-[#ffb020]/[0.08] flex items-center justify-center">
+            <ShieldAlert className="w-3.5 h-3.5 text-[#ffb020]" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Non vérifiables</p>
-            <p className="text-lg font-bold text-amber-500 font-mono">{stats.unverifiable}</p>
+            <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Non vérifiables</p>
+            <p className="text-base font-semibold text-[#ffb020] font-mono leading-none">{stats.unverifiable}</p>
           </div>
         </div>
       )}
 
       {stats.rateLimited > 0 && (
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-orange-500/10 flex items-center justify-center">
-            <AlertCircle className="w-4 h-4 text-orange-400" />
+          <div className="w-7 h-7 rounded-md bg-orange-500/[0.08] flex items-center justify-center">
+            <AlertCircle className="w-3.5 h-3.5 text-orange-400" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 font-mono uppercase tracking-wider">Limités</p>
-            <p className="text-lg font-bold text-orange-400 font-mono">{stats.rateLimited}</p>
+            <p className="text-[10px] text-[#55556a] uppercase tracking-wider">Limités</p>
+            <p className="text-base font-semibold text-orange-400 font-mono leading-none">{stats.rateLimited}</p>
           </div>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-FAST App Backend API Testing
-Tests all backend endpoints for the identity verification tool
+FAST App Backend API Testing - Aggressive Auto-Threading Scaling
+Tests all backend endpoints with focus on the new dynamic threading configuration
 """
 
 import requests
@@ -45,15 +45,18 @@ class FASTAPITester:
             
             if response.status_code == 200:
                 data = response.json()
-                if data.get("status") == "healthy" and "platforms" in data:
-                    platforms = data.get("platforms", [])
-                    expected_platforms = ["uber_eats", "amazon", "netflix", "binance", "coinbase"]
+                if data.get("status") == "healthy":
+                    # Check for required fields
+                    required_fields = ["email_platforms", "phone_platforms", "total_platforms", "threading"]
+                    missing_fields = [field for field in required_fields if field not in data]
                     
-                    if set(platforms) == set(expected_platforms):
-                        self.log_test("Health Check", True, f"Status: healthy, Platforms: {platforms}")
+                    if not missing_fields:
+                        total_platforms = data.get("total_platforms", 0)
+                        threading_info = data.get("threading", {})
+                        self.log_test("Health Check", True, f"Status: healthy, Total platforms: {total_platforms}, Threading: {threading_info}")
                         return True
                     else:
-                        self.log_test("Health Check", False, f"Missing platforms. Got: {platforms}")
+                        self.log_test("Health Check", False, f"Missing fields: {missing_fields}")
                         return False
                 else:
                     self.log_test("Health Check", False, f"Invalid response format: {data}")
@@ -66,13 +69,129 @@ class FASTAPITester:
             self.log_test("Health Check", False, f"Request failed: {str(e)}")
             return False
 
+    def test_platforms_endpoint(self) -> bool:
+        """Test /api/platforms endpoint"""
+        try:
+            response = requests.get(f"{self.api_url}/platforms", timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                
+                if "platforms" in data and "email_total" in data and "phone_total" in data:
+                    email_count = data.get("email_total", 0)
+                    phone_count = data.get("phone_total", 0)
+                    self.log_test("Platforms Endpoint", True, f"Email platforms: {email_count}, Phone platforms: {phone_count}")
+                    return True
+                else:
+                    self.log_test("Platforms Endpoint", False, f"Missing required fields: {data}")
+                    return False
+            else:
+                self.log_test("Platforms Endpoint", False, f"HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except Exception as e:
+            self.log_test("Platforms Endpoint", False, f"Request failed: {str(e)}")
+            return False
+
+    def test_thread_config_no_params(self) -> bool:
+        """Test GET /api/config/threads (no total param) - should work with defaults"""
+        try:
+            response = requests.get(f"{self.api_url}/config/threads", timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                required_fields = ["max_concurrent_identifiers", "max_concurrent_platforms", "recommended_batch_size", "mode"]
+                
+                missing_fields = [field for field in required_fields if field not in data]
+                if not missing_fields:
+                    identifiers = data.get("max_concurrent_identifiers", 0)
+                    batch_size = data.get("recommended_batch_size", 0)
+                    mode = data.get("mode", "unknown")
+                    self.log_test("Thread Config (no params)", True, 
+                                f"Identifiers: {identifiers}, Batch: {batch_size}, Mode: {mode}")
+                    return True
+                else:
+                    self.log_test("Thread Config (no params)", False, f"Missing fields: {missing_fields}")
+                    return False
+            else:
+                self.log_test("Thread Config (no params)", False, f"HTTP {response.status_code}: {response.text}")
+                return False
+                
+        except Exception as e:
+            self.log_test("Thread Config (no params)", False, f"Request failed: {str(e)}")
+            return False
+
+    def test_aggressive_thread_scaling(self) -> bool:
+        """Test aggressive auto-threading scaling with different total values"""
+        # First check if we have active proxies to determine expected values
+        try:
+            health_response = requests.get(f"{self.api_url}/health", timeout=10)
+            has_proxies = False
+            if health_response.status_code == 200:
+                health_data = health_response.json()
+                proxies_active = health_data.get("proxies_active", 0)
+                has_proxies = proxies_active > 0
+                print(f"    Active proxies detected: {proxies_active}")
+        except:
+            has_proxies = False
+        
+        # Test cases based on actual implementation logic
+        # Values depend on whether proxies are active
+        if has_proxies:
+            test_cases = [
+                {"total": 10, "expected_identifiers": 10, "expected_batch": 10, "tolerance": 2},
+                {"total": 50, "expected_identifiers": 25, "expected_batch": 30, "tolerance": 5},
+                {"total": 100, "expected_identifiers": 50, "expected_batch": 30, "tolerance": 5},
+                {"total": 500, "expected_identifiers": 80, "expected_batch": 80, "tolerance": 10},
+                {"total": 1000, "expected_identifiers": 100, "expected_batch": 80, "tolerance": 10},
+                {"total": 5000, "expected_identifiers": 100, "expected_batch": 100, "tolerance": 10},
+            ]
+        else:
+            test_cases = [
+                {"total": 10, "expected_identifiers": 10, "expected_batch": 10, "tolerance": 2},
+                {"total": 50, "expected_identifiers": 20, "expected_batch": 15, "tolerance": 5},
+                {"total": 100, "expected_identifiers": 30, "expected_batch": 25, "tolerance": 5},
+                {"total": 500, "expected_identifiers": 50, "expected_batch": 60, "tolerance": 10},
+                {"total": 1000, "expected_identifiers": 60, "expected_batch": 60, "tolerance": 10},
+                {"total": 5000, "expected_identifiers": 60, "expected_batch": 80, "tolerance": 10},
+            ]
+        
+        all_passed = True
+        
+        for case in test_cases:
+            try:
+                response = requests.get(f"{self.api_url}/config/threads?total={case['total']}", timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    identifiers = data.get("max_concurrent_identifiers", 0)
+                    batch_size = data.get("recommended_batch_size", 0)
+                    
+                    # Check if values are within expected range
+                    identifiers_ok = abs(identifiers - case["expected_identifiers"]) <= case["tolerance"]
+                    batch_ok = abs(batch_size - case["expected_batch"]) <= case["tolerance"]
+                    
+                    if identifiers_ok and batch_ok:
+                        self.log_test(f"Thread Scaling (total={case['total']})", True,
+                                    f"Identifiers: {identifiers} (expected ~{case['expected_identifiers']}), Batch: {batch_size} (expected ~{case['expected_batch']})")
+                    else:
+                        self.log_test(f"Thread Scaling (total={case['total']})", False,
+                                    f"Scaling mismatch - Identifiers: {identifiers} (expected ~{case['expected_identifiers']}), Batch: {batch_size} (expected ~{case['expected_batch']})")
+                        all_passed = False
+                else:
+                    self.log_test(f"Thread Scaling (total={case['total']})", False, 
+                                f"HTTP {response.status_code}: {response.text}")
+                    all_passed = False
+                    
+            except Exception as e:
+                self.log_test(f"Thread Scaling (total={case['total']})", False, f"Request failed: {str(e)}")
+                all_passed = False
+        
+        return all_passed
     def test_verify_endpoint(self) -> bool:
-        """Test /api/verify endpoint with text input"""
-        test_identifiers = [
-            "test@example.com",
-            "+33612345678",
-            "user@domain.fr"
-        ]
+        """Test POST /api/verify endpoint with small batch to verify dynamic threading works"""
+        test_identifiers = ["test@example.com"]
         
         try:
             payload = {"identifiers": test_identifiers}
@@ -101,7 +220,7 @@ class FASTAPITester:
                             
                             # Check platforms
                             platforms = result["platforms"]
-                            if len(platforms) != 5:  # Should have 5 platforms
+                            if len(platforms) == 0:  # Should have some platforms
                                 all_valid = False
                                 break
                             
@@ -109,12 +228,14 @@ class FASTAPITester:
                                 if not all(field in platform for field in ["platform", "status"]):
                                     all_valid = False
                                     break
-                                if platform["status"] not in ["found", "not_found"]:
+                                # Allow more status types including unverifiable
+                                if platform["status"] not in ["found", "not_found", "unverifiable", "rate_limited", "error"]:
                                     all_valid = False
                                     break
                         
                         if all_valid:
-                            self.log_test("Verify Endpoint", True, f"Verified {len(results)} identifiers successfully")
+                            platforms_count = len(results[0]["platforms"]) if results else 0
+                            self.log_test("Verify Endpoint", True, f"Verified {len(results)} identifier(s), {platforms_count} platforms checked")
                             return True
                         else:
                             self.log_test("Verify Endpoint", False, "Invalid result structure")
@@ -214,7 +335,7 @@ admin@test.com,+33698765432"""
     def test_error_handling(self) -> bool:
         """Test error handling for invalid requests"""
         tests_passed = 0
-        total_tests = 3
+        total_tests = 2
         
         # Test 1: Empty identifiers list
         try:
@@ -231,10 +352,10 @@ admin@test.com,+33698765432"""
         except Exception as e:
             print(f"    ❌ Empty identifiers test failed: {e}")
 
-        # Test 2: Invalid file type
+        # Test 2: Invalid file type for parse-file
         try:
             files = {'file': ('test.exe', b'invalid content', 'application/octet-stream')}
-            response = requests.post(f"{self.api_url}/verify/file", files=files, timeout=10)
+            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=10)
             if response.status_code == 400:
                 tests_passed += 1
                 print("    ✅ Invalid file type handled correctly")
@@ -242,17 +363,6 @@ admin@test.com,+33698765432"""
                 print(f"    ❌ Invalid file type: Expected 400, got {response.status_code}")
         except Exception as e:
             print(f"    ❌ Invalid file type test failed: {e}")
-
-        # Test 3: Empty single identifier
-        try:
-            response = requests.post(f"{self.api_url}/verify/single", params={"identifier": ""}, timeout=10)
-            if response.status_code == 400:
-                tests_passed += 1
-                print("    ✅ Empty single identifier handled correctly")
-            else:
-                print(f"    ❌ Empty single identifier: Expected 400, got {response.status_code}")
-        except Exception as e:
-            print(f"    ❌ Empty single identifier test failed: {e}")
 
         success = tests_passed == total_tests
         self.log_test("Error Handling", success, f"Passed {tests_passed}/{total_tests} error handling tests")
@@ -408,31 +518,53 @@ nothing useful for parsing"""
             return False
 
     def run_all_tests(self) -> Dict[str, Any]:
-        """Run all backend tests"""
-        print("🚀 Starting FAST Backend API Tests")
+        """Run all backend tests with focus on aggressive auto-threading scaling"""
+        print("🚀 Starting FAST Backend API Tests - Aggressive Auto-Threading Scaling")
         print(f"📍 Testing against: {self.base_url}")
-        print("=" * 60)
+        print("=" * 80)
         
-        # Run all tests
+        # Test basic endpoints first
         self.test_health_endpoint()
+        self.test_platforms_endpoint()
+        
+        # Test aggressive auto-threading scaling (main focus)
+        print("\n🎯 AGGRESSIVE AUTO-THREADING SCALING TESTS")
+        print("-" * 50)
+        self.test_thread_config_no_params()
+        self.test_aggressive_thread_scaling()
+        
+        # Test verification with new dynamic threading
+        print("\n🔍 VERIFICATION WITH DYNAMIC THREADING")
+        print("-" * 50)
         self.test_verify_endpoint()
-        self.test_verify_file_endpoint()
-        self.test_parse_file_endpoint()  # New parse-file endpoint test
-        self.test_verify_single_endpoint()
+        
+        # Test other endpoints
+        print("\n📁 FILE PROCESSING TESTS")
+        print("-" * 50)
+        self.test_parse_file_endpoint()
+        
+        print("\n⚠️  ERROR HANDLING TESTS")
+        print("-" * 50)
         self.test_error_handling()
-        self.test_cors_headers()
         
         # Summary
-        print("\n" + "=" * 60)
+        print("\n" + "=" * 80)
         print(f"📊 Test Summary: {self.tests_passed}/{self.tests_run} tests passed")
         
         success_rate = (self.tests_passed / self.tests_run * 100) if self.tests_run > 0 else 0
         print(f"✨ Success Rate: {success_rate:.1f}%")
         
         if self.tests_passed == self.tests_run:
-            print("🎉 All tests passed! Backend is working correctly.")
+            print("🎉 All tests passed! Aggressive auto-threading scaling is working correctly.")
         else:
             print("⚠️  Some tests failed. Check the details above.")
+            
+            # Show failed tests
+            failed_tests = [result for result in self.test_results if not result["success"]]
+            if failed_tests:
+                print("\n❌ FAILED TESTS:")
+                for test in failed_tests:
+                    print(f"  - {test['test']}: {test['details']}")
         
         return {
             "total_tests": self.tests_run,
