@@ -26,12 +26,20 @@ export default function HomePage() {
   const [selectedPlatforms, setSelectedPlatforms] = useState([]);
   const [filePreviewData, setFilePreviewData] = useState(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [platformsNeedingProxy, setPlatformsNeedingProxy] = useState([]);
 
   useEffect(() => {
-    const checkProxies = async () => {
-      try { const r = await axios.get(`${API}/proxies`); setProxyCount(r.data.active || 0); } catch (e) { setProxyCount(0); }
+    const checkHealth = async () => {
+      try { 
+        const r = await axios.get(`${API}/health`); 
+        setProxyCount(r.data.proxies_active || 0); 
+        setPlatformsNeedingProxy(r.data.custom_platforms_need_proxy || []);
+      } catch (e) { 
+        setProxyCount(0); 
+        setPlatformsNeedingProxy(["uber_eats", "binance", "coinbase", "deliveroo"]);
+      }
     };
-    checkProxies();
+    checkHealth();
   }, []);
 
   const handleVerify = useCallback(async (identifiers) => {
@@ -173,13 +181,15 @@ export default function HomePage() {
         <ProxyManager onProxyChange={(count) => setProxyCount(count)} />
         <PlatformSelector selectedPlatforms={selectedPlatforms} onSelectionChange={setSelectedPlatforms} disabled={isVerifying} />
 
-        {proxyCount === 0 && (
+        {proxyCount === 0 && platformsNeedingProxy.length > 0 && (
           <div className="mb-6 px-4 py-3 rounded-xl glass-card border-yellow-500/20">
             <div className="flex items-start gap-2.5">
               <ShieldAlert className="w-4 h-4 text-yellow-400 flex-shrink-0 mt-0.5" />
               <div>
                 <p className="text-yellow-400 text-xs font-semibold">Aucun proxy configuré</p>
-                <p className="text-yellow-400/40 text-[11px] mt-0.5">Netflix, Uber Eats, Binance, Coinbase et Deliveroo nécessitent des proxies résidentiels.</p>
+                <p className="text-yellow-400/40 text-[11px] mt-0.5">
+                  {platformsNeedingProxy.map(p => p.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())).join(', ')} nécessitent des proxies résidentiels.
+                </p>
               </div>
             </div>
           </div>

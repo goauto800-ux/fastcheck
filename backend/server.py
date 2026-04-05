@@ -540,33 +540,35 @@ def _get_proxy_for_curl_cffi() -> Optional[Dict[str, str]]:
 
 
 async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via forgot password API"""
+    """Check Netflix via forgot password API - Works with Emergent rotating IPs"""
     import codecs
     
+    # Check if we have external proxies configured
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": "no_active_proxy"}
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
     try:
         from curl_cffi.requests import AsyncSession
         import re
         
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=20) as session:
+        # Use proxy if available, otherwise use direct connection (Emergent rotating IPs)
+        session_kwargs = {"impersonate": "chrome120", "timeout": 20}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        async with AsyncSession(**session_kwargs) as session:
             # Get LoginHelp page
-            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=10)
+            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=15)
             
             if resp.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             if resp.status_code != 200:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api"}
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": f"status_{resp.status_code}"}
             
             # Extract authURL
             auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
@@ -586,7 +588,7 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
                     'Referer': 'https://www.netflix.com/LoginHelp',
                     'Origin': 'https://www.netflix.com',
                 },
-                timeout=10,
+                timeout=15,
                 allow_redirects=True
             )
             
@@ -595,36 +597,42 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
             
             # /NotFound = email doesn't exist
             if '/notfound' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             # /LoginHelpConfirm = email sent = EXISTS
             if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             # Check text signals
-            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email']):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email', 'envoyé un e-mail']):
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas"]):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "introuvable"]):
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
             # Still on LoginHelp = not found
             if '/loginhelp' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
             
-            proxy_manager.mark_success(proxy_info["proxy_id"])
+            if proxy_info:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
             return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
     
     except Exception as e:
         logging.error(f"Netflix error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": str(e)[:50]}
 
 
 async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
@@ -1123,9 +1131,9 @@ HOLEHE_MODULES = {
 }
 
 CUSTOM_EMAIL_PLATFORMS = {
-    # Note: Ces plateformes nécessitent des proxies résidentiels pour fonctionner
-    # Sans proxies, elles retourneront "rate_limited" ou "not_found" même si le compte existe
-    "netflix": {"func": check_netflix_custom, "category": "Streaming", "needs_proxy": True},
+    # Note: Certaines plateformes peuvent nécessiter des proxies résidentiels pour éviter les rate limits
+    # Netflix fonctionne avec les IP rotatifs d'Emergent (needs_proxy: False)
+    "netflix": {"func": check_netflix_custom, "category": "Streaming", "needs_proxy": False},
     "uber_eats": {"func": check_uber_custom, "category": "Food", "needs_proxy": True},
     "binance": {"func": check_binance_custom, "category": "Crypto", "needs_proxy": True},
     "coinbase": {"func": check_coinbase_custom, "category": "Crypto", "needs_proxy": True},
@@ -1399,6 +1407,9 @@ async def root():
 
 @api_router.get("/health")
 async def health_check():
+    # Filter platforms that actually need proxy
+    platforms_needing_proxy = [name for name, config in CUSTOM_EMAIL_PLATFORMS.items() if config.get("needs_proxy", False)]
+    
     return {
         "status": "healthy", 
         "email_platforms": ALL_EMAIL_PLATFORMS,
@@ -1407,7 +1418,7 @@ async def health_check():
         "proxies_count": len(proxy_manager.proxies),
         "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
         "mode": "real_verification",
-        "custom_platforms_need_proxy": list(CUSTOM_EMAIL_PLATFORMS.keys()),
+        "custom_platforms_need_proxy": platforms_needing_proxy,
         "threading": thread_config.get_info()
     }
 
