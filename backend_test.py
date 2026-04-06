@@ -1,585 +1,340 @@
 #!/usr/bin/env python3
 """
-FAST App Backend API Testing - Aggressive Auto-Threading Scaling
-Tests all backend endpoints with focus on the new dynamic threading configuration
+Backend API Testing for Email Checker
+Tests the 7 platform email checker backend API
 """
 
-import requests
-import sys
+import asyncio
+import httpx
 import json
-import io
-from datetime import datetime
+import sys
 from typing import Dict, List, Any
 
-class FASTAPITester:
-    def __init__(self, base_url="https://proxy-free-checker.preview.emergentagent.com"):
-        self.base_url = base_url
-        self.api_url = f"{base_url}/api"
-        self.tests_run = 0
-        self.tests_passed = 0
-        self.test_results = []
+# Backend URL from frontend/.env
+BACKEND_URL = "https://proxy-free-checker.preview.emergentagent.com/api"
 
-    def log_test(self, name: str, success: bool, details: str = ""):
-        """Log test result"""
-        self.tests_run += 1
-        if success:
-            self.tests_passed += 1
+# Expected platforms (exactly 7)
+EXPECTED_PLATFORMS = [
+    "netflix", "amazon", "coinbase", "binance", 
+    "spotify", "twitter", "disney_plus"
+]
+
+class BackendTester:
+    def __init__(self):
+        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        self.test_results = []
+        self.failed_tests = []
         
+    async def log_test(self, test_name: str, success: bool, details: str = ""):
+        """Log test result"""
         result = {
-            "test": name,
+            "test": test_name,
             "success": success,
-            "details": details,
-            "timestamp": datetime.now().isoformat()
+            "details": details
         }
         self.test_results.append(result)
         
         status = "✅ PASS" if success else "❌ FAIL"
-        print(f"{status} - {name}")
+        print(f"{status}: {test_name}")
         if details:
-            print(f"    {details}")
-
-    def test_health_endpoint(self) -> bool:
-        """Test /api/health endpoint"""
+            print(f"   Details: {details}")
+        if not success:
+            self.failed_tests.append(test_name)
+    
+    async def test_platforms_endpoint(self):
+        """Test GET /api/platforms - should return exactly 7 email and 7 phone platforms"""
         try:
-            response = requests.get(f"{self.api_url}/health", timeout=10)
+            response = await self.client.get(f"{BACKEND_URL}/platforms")
             
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("status") == "healthy":
-                    # Check for required fields
-                    required_fields = ["email_platforms", "phone_platforms", "total_platforms", "threading"]
-                    missing_fields = [field for field in required_fields if field not in data]
-                    
-                    if not missing_fields:
-                        total_platforms = data.get("total_platforms", 0)
-                        threading_info = data.get("threading", {})
-                        self.log_test("Health Check", True, f"Status: healthy, Total platforms: {total_platforms}, Threading: {threading_info}")
-                        return True
-                    else:
-                        self.log_test("Health Check", False, f"Missing fields: {missing_fields}")
-                        return False
-                else:
-                    self.log_test("Health Check", False, f"Invalid response format: {data}")
-                    return False
-            else:
-                self.log_test("Health Check", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
-        except Exception as e:
-            self.log_test("Health Check", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_platforms_endpoint(self) -> bool:
-        """Test /api/platforms endpoint"""
-        try:
-            response = requests.get(f"{self.api_url}/platforms", timeout=10)
+            if response.status_code != 200:
+                await self.log_test("GET /api/platforms", False, f"Status code: {response.status_code}")
+                return
             
-            if response.status_code == 200:
-                data = response.json()
-                
-                if "platforms" in data and "email_total" in data and "phone_total" in data:
-                    email_count = data.get("email_total", 0)
-                    phone_count = data.get("phone_total", 0)
-                    self.log_test("Platforms Endpoint", True, f"Email platforms: {email_count}, Phone platforms: {phone_count}")
-                    return True
-                else:
-                    self.log_test("Platforms Endpoint", False, f"Missing required fields: {data}")
-                    return False
-            else:
-                self.log_test("Platforms Endpoint", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
-        except Exception as e:
-            self.log_test("Platforms Endpoint", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_thread_config_no_params(self) -> bool:
-        """Test GET /api/config/threads (no total param) - should work with defaults"""
-        try:
-            response = requests.get(f"{self.api_url}/config/threads", timeout=10)
+            data = response.json()
             
-            if response.status_code == 200:
-                data = response.json()
-                required_fields = ["max_concurrent_identifiers", "max_concurrent_platforms", "recommended_batch_size", "mode"]
-                
-                missing_fields = [field for field in required_fields if field not in data]
-                if not missing_fields:
-                    identifiers = data.get("max_concurrent_identifiers", 0)
-                    batch_size = data.get("recommended_batch_size", 0)
-                    mode = data.get("mode", "unknown")
-                    self.log_test("Thread Config (no params)", True, 
-                                f"Identifiers: {identifiers}, Batch: {batch_size}, Mode: {mode}")
-                    return True
-                else:
-                    self.log_test("Thread Config (no params)", False, f"Missing fields: {missing_fields}")
-                    return False
-            else:
-                self.log_test("Thread Config (no params)", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
-        except Exception as e:
-            self.log_test("Thread Config (no params)", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_aggressive_thread_scaling(self) -> bool:
-        """Test aggressive auto-threading scaling with different total values"""
-        # First check if we have active proxies to determine expected values
-        try:
-            health_response = requests.get(f"{self.api_url}/health", timeout=10)
-            has_proxies = False
-            if health_response.status_code == 200:
-                health_data = health_response.json()
-                proxies_active = health_data.get("proxies_active", 0)
-                has_proxies = proxies_active > 0
-                print(f"    Active proxies detected: {proxies_active}")
-        except:
-            has_proxies = False
-        
-        # Test cases based on actual implementation logic
-        # Values depend on whether proxies are active
-        if has_proxies:
-            test_cases = [
-                {"total": 10, "expected_identifiers": 10, "expected_batch": 10, "tolerance": 2},
-                {"total": 50, "expected_identifiers": 25, "expected_batch": 30, "tolerance": 5},
-                {"total": 100, "expected_identifiers": 50, "expected_batch": 30, "tolerance": 5},
-                {"total": 500, "expected_identifiers": 80, "expected_batch": 80, "tolerance": 10},
-                {"total": 1000, "expected_identifiers": 100, "expected_batch": 80, "tolerance": 10},
-                {"total": 5000, "expected_identifiers": 100, "expected_batch": 100, "tolerance": 10},
-            ]
-        else:
-            test_cases = [
-                {"total": 10, "expected_identifiers": 10, "expected_batch": 10, "tolerance": 2},
-                {"total": 50, "expected_identifiers": 20, "expected_batch": 15, "tolerance": 5},
-                {"total": 100, "expected_identifiers": 30, "expected_batch": 25, "tolerance": 5},
-                {"total": 500, "expected_identifiers": 50, "expected_batch": 60, "tolerance": 10},
-                {"total": 1000, "expected_identifiers": 60, "expected_batch": 60, "tolerance": 10},
-                {"total": 5000, "expected_identifiers": 60, "expected_batch": 80, "tolerance": 10},
-            ]
-        
-        all_passed = True
-        
-        for case in test_cases:
-            try:
-                response = requests.get(f"{self.api_url}/config/threads?total={case['total']}", timeout=10)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    
-                    identifiers = data.get("max_concurrent_identifiers", 0)
-                    batch_size = data.get("recommended_batch_size", 0)
-                    
-                    # Check if values are within expected range
-                    identifiers_ok = abs(identifiers - case["expected_identifiers"]) <= case["tolerance"]
-                    batch_ok = abs(batch_size - case["expected_batch"]) <= case["tolerance"]
-                    
-                    if identifiers_ok and batch_ok:
-                        self.log_test(f"Thread Scaling (total={case['total']})", True,
-                                    f"Identifiers: {identifiers} (expected ~{case['expected_identifiers']}), Batch: {batch_size} (expected ~{case['expected_batch']})")
-                    else:
-                        self.log_test(f"Thread Scaling (total={case['total']})", False,
-                                    f"Scaling mismatch - Identifiers: {identifiers} (expected ~{case['expected_identifiers']}), Batch: {batch_size} (expected ~{case['expected_batch']})")
-                        all_passed = False
-                else:
-                    self.log_test(f"Thread Scaling (total={case['total']})", False, 
-                                f"HTTP {response.status_code}: {response.text}")
-                    all_passed = False
-                    
-            except Exception as e:
-                self.log_test(f"Thread Scaling (total={case['total']})", False, f"Request failed: {str(e)}")
-                all_passed = False
-        
-        return all_passed
-    def test_verify_endpoint(self) -> bool:
-        """Test POST /api/verify endpoint with small batch to verify dynamic threading works"""
-        test_identifiers = ["test@example.com"]
-        
-        try:
-            payload = {"identifiers": test_identifiers}
-            response = requests.post(
-                f"{self.api_url}/verify", 
-                json=payload,
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
+            # Check email platforms count
+            email_total = data.get("email_total", 0)
+            if email_total != 7:
+                await self.log_test("Email platforms count", False, f"Expected 7, got {email_total}")
+                return
             
-            if response.status_code == 200:
-                data = response.json()
-                
-                # Validate response structure
-                if "total" in data and "results" in data:
-                    results = data["results"]
-                    
-                    if len(results) == len(test_identifiers):
-                        # Check each result structure
-                        all_valid = True
-                        for result in results:
-                            required_fields = ["id", "identifier", "identifier_type", "platforms", "timestamp"]
-                            if not all(field in result for field in required_fields):
-                                all_valid = False
-                                break
-                            
-                            # Check platforms
-                            platforms = result["platforms"]
-                            if len(platforms) == 0:  # Should have some platforms
-                                all_valid = False
-                                break
-                            
-                            for platform in platforms:
-                                if not all(field in platform for field in ["platform", "status"]):
-                                    all_valid = False
-                                    break
-                                # Allow more status types including unverifiable
-                                if platform["status"] not in ["found", "not_found", "unverifiable", "rate_limited", "error"]:
-                                    all_valid = False
-                                    break
-                        
-                        if all_valid:
-                            platforms_count = len(results[0]["platforms"]) if results else 0
-                            self.log_test("Verify Endpoint", True, f"Verified {len(results)} identifier(s), {platforms_count} platforms checked")
-                            return True
-                        else:
-                            self.log_test("Verify Endpoint", False, "Invalid result structure")
-                            return False
-                    else:
-                        self.log_test("Verify Endpoint", False, f"Expected {len(test_identifiers)} results, got {len(results)}")
-                        return False
-                else:
-                    self.log_test("Verify Endpoint", False, f"Invalid response format: {data}")
-                    return False
-            else:
-                self.log_test("Verify Endpoint", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
+            # Check phone platforms count
+            phone_total = data.get("phone_total", 0)
+            if phone_total != 7:
+                await self.log_test("Phone platforms count", False, f"Expected 7, got {phone_total}")
+                return
+            
+            # Extract platform names from the nested structure
+            email_platforms = [p["name"] for p in data.get("platforms", {}).get("email", [])]
+            phone_platforms = [p["name"] for p in data.get("platforms", {}).get("phone", [])]
+            
+            # Check exact platform names
+            email_set = set(email_platforms)
+            expected_set = set(EXPECTED_PLATFORMS)
+            
+            if email_set != expected_set:
+                missing = expected_set - email_set
+                extra = email_set - expected_set
+                await self.log_test("Email platforms content", False, f"Missing: {missing}, Extra: {extra}")
+                return
+            
+            # Check phone platforms match email platforms
+            phone_set = set(phone_platforms)
+            if phone_set != expected_set:
+                missing = expected_set - phone_set
+                extra = phone_set - expected_set
+                await self.log_test("Phone platforms content", False, f"Missing: {missing}, Extra: {extra}")
+                return
+            
+            await self.log_test("GET /api/platforms", True, f"Email: {email_platforms}, Phone: {phone_platforms}")
+            
         except Exception as e:
-            self.log_test("Verify Endpoint", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_verify_file_endpoint(self) -> bool:
-        """Test /api/verify/file endpoint with CSV upload"""
-        # Create test CSV content
-        csv_content = """email,phone
-test1@example.com,+33612345678
-user@domain.fr,+33687654321
-admin@test.com,+33698765432"""
+            await self.log_test("GET /api/platforms", False, f"Exception: {str(e)}")
+    
+    async def test_health_endpoint(self):
+        """Test GET /api/health - verify custom_platforms_need_proxy is empty and all platforms listed"""
+        try:
+            response = await self.client.get(f"{BACKEND_URL}/health")
+            
+            if response.status_code != 200:
+                await self.log_test("GET /api/health", False, f"Status code: {response.status_code}")
+                return
+            
+            data = response.json()
+            
+            # Check custom_platforms_need_proxy is empty array
+            custom_proxy_needed = data.get("custom_platforms_need_proxy", None)
+            if custom_proxy_needed != []:
+                await self.log_test("custom_platforms_need_proxy", False, f"Expected [], got {custom_proxy_needed}")
+                return
+            
+            # Check proxies_count is 0 (no proxy required)
+            proxies_count = data.get("proxies_count", None)
+            if proxies_count != 0:
+                await self.log_test("proxies_count", False, f"Expected 0, got {proxies_count}")
+                return
+            
+            # Check email_platforms contains all 7
+            email_platforms = data.get("email_platforms", [])
+            if set(email_platforms) != set(EXPECTED_PLATFORMS):
+                await self.log_test("health email_platforms", False, f"Expected {EXPECTED_PLATFORMS}, got {email_platforms}")
+                return
+            
+            # Check phone_platforms contains all 7
+            phone_platforms = data.get("phone_platforms", [])
+            if set(phone_platforms) != set(EXPECTED_PLATFORMS):
+                await self.log_test("health phone_platforms", False, f"Expected {EXPECTED_PLATFORMS}, got {phone_platforms}")
+                return
+            
+            await self.log_test("GET /api/health", True, f"Proxy count: {proxies_count}, Custom proxy needed: {custom_proxy_needed}")
+            
+        except Exception as e:
+            await self.log_test("GET /api/health", False, f"Exception: {str(e)}")
+    
+    async def test_email_verification(self):
+        """Test POST /api/verify with email for all 7 platforms"""
+        test_email = "test@example.com"
         
         try:
-            # Create file-like object
-            files = {
-                'file': ('test_data.csv', io.StringIO(csv_content), 'text/csv')
+            payload = {
+                "identifiers": [test_email],
+                "platforms": EXPECTED_PLATFORMS
             }
             
-            response = requests.post(
-                f"{self.api_url}/verify/file",
-                files=files,
-                timeout=30
+            response = await self.client.post(
+                f"{BACKEND_URL}/verify",
+                json=payload,
+                headers={"Content-Type": "application/json"}
             )
             
-            if response.status_code == 200:
-                data = response.json()
+            if response.status_code != 200:
+                await self.log_test("POST /api/verify (email)", False, f"Status code: {response.status_code}, Response: {response.text}")
+                return
+            
+            data = response.json()
+            
+            # Check response structure
+            if "results" not in data or len(data["results"]) == 0:
+                await self.log_test("Email verification structure", False, "Missing 'results' in response or empty results")
+                return
+            
+            result = data["results"][0]
+            platforms_results = result.get("platforms", [])
+            
+            # Check all 7 platforms returned results
+            returned_platforms = [p.get("platform") for p in platforms_results]
+            if len(returned_platforms) != 7:
+                await self.log_test("Email verification platform count", False, f"Expected 7 platforms, got {len(returned_platforms)}: {returned_platforms}")
+                return
+            
+            # Check no platform crashed/errored
+            failed_platforms = []
+            for platform_result in platforms_results:
+                platform_name = platform_result.get("platform", "unknown")
                 
-                if "total" in data and "results" in data:
-                    results = data["results"]
-                    
-                    # Should extract at least the emails and phones from CSV
-                    if len(results) >= 4:  # At least 4 identifiers (3 emails + 3 phones)
-                        self.log_test("File Upload Endpoint", True, f"Processed file with {len(results)} identifiers")
-                        return True
-                    else:
-                        self.log_test("File Upload Endpoint", False, f"Expected at least 4 identifiers, got {len(results)}")
-                        return False
-                else:
-                    self.log_test("File Upload Endpoint", False, f"Invalid response format: {data}")
-                    return False
-            else:
-                self.log_test("File Upload Endpoint", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
+                # Check required fields exist
+                if "status" not in platform_result:
+                    failed_platforms.append(f"{platform_name}: missing status")
+                elif "domain" not in platform_result:
+                    failed_platforms.append(f"{platform_name}: missing domain")
+                elif platform_result.get("status") == "error":
+                    failed_platforms.append(f"{platform_name}: error status")
+            
+            if failed_platforms:
+                await self.log_test("Email verification platform results", False, f"Failed platforms: {failed_platforms}")
+                return
+            
+            await self.log_test("POST /api/verify (email)", True, f"All 7 platforms responded successfully for {test_email}")
+            
         except Exception as e:
-            self.log_test("File Upload Endpoint", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_verify_single_endpoint(self) -> bool:
-        """Test /api/verify/single endpoint"""
-        test_email = "single@test.com"
+            await self.log_test("POST /api/verify (email)", False, f"Exception: {str(e)}")
+    
+    async def test_phone_verification(self):
+        """Test POST /api/verify with phone for all 7 platforms"""
+        test_phone = "+33612345678"
         
         try:
-            response = requests.post(
-                f"{self.api_url}/verify/single",
-                params={"identifier": test_email},
-                timeout=15
+            payload = {
+                "identifiers": [test_phone],
+                "platforms": EXPECTED_PLATFORMS
+            }
+            
+            response = await self.client.post(
+                f"{BACKEND_URL}/verify",
+                json=payload,
+                headers={"Content-Type": "application/json"}
             )
             
-            if response.status_code == 200:
-                data = response.json()
+            if response.status_code != 200:
+                await self.log_test("POST /api/verify (phone)", False, f"Status code: {response.status_code}, Response: {response.text}")
+                return
+            
+            data = response.json()
+            
+            # Check response structure
+            if "results" not in data or len(data["results"]) == 0:
+                await self.log_test("Phone verification structure", False, "Missing 'results' in response or empty results")
+                return
+            
+            result = data["results"][0]
+            platforms_results = result.get("platforms", [])
+            
+            # Check all 7 platforms returned results
+            returned_platforms = [p.get("platform") for p in platforms_results]
+            if len(returned_platforms) != 7:
+                await self.log_test("Phone verification platform count", False, f"Expected 7 platforms, got {len(returned_platforms)}: {returned_platforms}")
+                return
+            
+            # Check no platform crashed
+            crashed_platforms = []
+            for platform_result in platforms_results:
+                platform_name = platform_result.get("platform", "unknown")
                 
-                # Validate single result structure
-                required_fields = ["id", "identifier", "identifier_type", "platforms", "timestamp"]
-                if all(field in data for field in required_fields):
-                    if data["identifier"] == test_email and len(data["platforms"]) == 5:
-                        self.log_test("Single Verify Endpoint", True, f"Verified single identifier: {test_email}")
-                        return True
-                    else:
-                        self.log_test("Single Verify Endpoint", False, "Invalid result data")
-                        return False
-                else:
-                    self.log_test("Single Verify Endpoint", False, f"Missing required fields: {data}")
-                    return False
-            else:
-                self.log_test("Single Verify Endpoint", False, f"HTTP {response.status_code}: {response.text}")
-                return False
-                
-        except Exception as e:
-            self.log_test("Single Verify Endpoint", False, f"Request failed: {str(e)}")
-            return False
-
-    def test_error_handling(self) -> bool:
-        """Test error handling for invalid requests"""
-        tests_passed = 0
-        total_tests = 2
-        
-        # Test 1: Empty identifiers list
-        try:
-            response = requests.post(
-                f"{self.api_url}/verify",
-                json={"identifiers": []},
-                timeout=10
-            )
-            if response.status_code == 400:
-                tests_passed += 1
-                print("    ✅ Empty identifiers handled correctly")
-            else:
-                print(f"    ❌ Empty identifiers: Expected 400, got {response.status_code}")
-        except Exception as e:
-            print(f"    ❌ Empty identifiers test failed: {e}")
-
-        # Test 2: Invalid file type for parse-file
-        try:
-            files = {'file': ('test.exe', b'invalid content', 'application/octet-stream')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=10)
-            if response.status_code == 400:
-                tests_passed += 1
-                print("    ✅ Invalid file type handled correctly")
-            else:
-                print(f"    ❌ Invalid file type: Expected 400, got {response.status_code}")
-        except Exception as e:
-            print(f"    ❌ Invalid file type test failed: {e}")
-
-        success = tests_passed == total_tests
-        self.log_test("Error Handling", success, f"Passed {tests_passed}/{total_tests} error handling tests")
-        return success
-
-    def test_parse_file_endpoint(self) -> bool:
-        """Test /api/parse-file endpoint with various file types and content"""
-        all_tests_passed = True
-        
-        # Test 1: Mixed emails and phone numbers
-        mixed_content = """test@example.com
-user@gmail.com
-+33612345678
-0612345679
-another@test.fr
-+44771234567"""
-        
-        try:
-            files = {'file': ('mixed_data.txt', mixed_content, 'text/plain')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+                # Check for crash indicators
+                if platform_result.get("status") == "error":
+                    crashed_platforms.append(f"{platform_name}: error status")
+                elif "exception" in str(platform_result).lower():
+                    crashed_platforms.append(f"{platform_name}: exception detected")
             
-            if response.status_code == 200:
-                data = response.json()
-                required_fields = ["filename", "total", "emails", "phones", "email_count", "phone_count", "preview"]
-                
-                if all(field in data for field in required_fields):
-                    if data["email_count"] > 0 and data["phone_count"] > 0:
-                        self.log_test("Parse File - Mixed Content", True, 
-                                    f"Found {data['email_count']} emails, {data['phone_count']} phones")
-                    else:
-                        self.log_test("Parse File - Mixed Content", False, 
-                                    f"Expected both emails and phones, got emails: {data['email_count']}, phones: {data['phone_count']}")
-                        all_tests_passed = False
-                else:
-                    self.log_test("Parse File - Mixed Content", False, f"Missing required fields: {data}")
-                    all_tests_passed = False
-            else:
-                self.log_test("Parse File - Mixed Content", False, f"HTTP {response.status_code}: {response.text}")
-                all_tests_passed = False
-        except Exception as e:
-            self.log_test("Parse File - Mixed Content", False, f"Request failed: {str(e)}")
-            all_tests_passed = False
-        
-        # Test 2: CSV with only emails
-        csv_emails_only = """email,name
-user1@example.com,John
-user2@gmail.com,Jane
-admin@company.fr,Admin"""
-        
-        try:
-            files = {'file': ('emails_only.csv', csv_emails_only, 'text/csv')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            if crashed_platforms:
+                await self.log_test("Phone verification platform stability", False, f"Crashed platforms: {crashed_platforms}")
+                return
             
-            if response.status_code == 200:
-                data = response.json()
-                if data["email_count"] > 0 and data["phone_count"] == 0:
-                    self.log_test("Parse File - Emails Only", True, 
-                                f"Found {data['email_count']} emails, {data['phone_count']} phones")
-                else:
-                    self.log_test("Parse File - Emails Only", False, 
-                                f"Expected only emails, got emails: {data['email_count']}, phones: {data['phone_count']}")
-                    all_tests_passed = False
-            else:
-                self.log_test("Parse File - Emails Only", False, f"HTTP {response.status_code}: {response.text}")
-                all_tests_passed = False
-        except Exception as e:
-            self.log_test("Parse File - Emails Only", False, f"Request failed: {str(e)}")
-            all_tests_passed = False
-        
-        # Test 3: Text file with only phone numbers
-        phones_only = """+33612345678
-+44771234567
-0687654321
-+1234567890"""
-        
-        try:
-            files = {'file': ('phones_only.txt', phones_only, 'text/plain')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            await self.log_test("POST /api/verify (phone)", True, f"All 7 platforms responded for {test_phone}")
             
-            if response.status_code == 200:
-                data = response.json()
-                if data["phone_count"] > 0 and data["email_count"] == 0:
-                    self.log_test("Parse File - Phones Only", True, 
-                                f"Found {data['email_count']} emails, {data['phone_count']} phones")
-                else:
-                    self.log_test("Parse File - Phones Only", False, 
-                                f"Expected only phones, got emails: {data['email_count']}, phones: {data['phone_count']}")
-                    all_tests_passed = False
-            else:
-                self.log_test("Parse File - Phones Only", False, f"HTTP {response.status_code}: {response.text}")
-                all_tests_passed = False
         except Exception as e:
-            self.log_test("Parse File - Phones Only", False, f"Request failed: {str(e)}")
-            all_tests_passed = False
-        
-        # Test 4: Empty file
+            await self.log_test("POST /api/verify (phone)", False, f"Exception: {str(e)}")
+    
+    async def test_no_old_platforms(self):
+        """Verify that old platforms like uber_eats, deliveroo, etc. are not present"""
         try:
-            files = {'file': ('empty.txt', '', 'text/plain')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            response = await self.client.get(f"{BACKEND_URL}/platforms")
             
-            if response.status_code == 400:
-                self.log_test("Parse File - Empty File", True, "Empty file correctly rejected with 400")
-            else:
-                self.log_test("Parse File - Empty File", False, f"Expected 400 for empty file, got {response.status_code}")
-                all_tests_passed = False
-        except Exception as e:
-            self.log_test("Parse File - Empty File", False, f"Request failed: {str(e)}")
-            all_tests_passed = False
-        
-        # Test 5: File with invalid content (no emails/phones)
-        invalid_content = """This is just some random text
-with no emails or phone numbers
-just words and sentences
-nothing useful for parsing"""
-        
-        try:
-            files = {'file': ('invalid.txt', invalid_content, 'text/plain')}
-            response = requests.post(f"{self.api_url}/parse-file", files=files, timeout=15)
+            if response.status_code != 200:
+                await self.log_test("Old platforms check", False, f"Could not get platforms list: {response.status_code}")
+                return
             
-            if response.status_code == 400:
-                self.log_test("Parse File - Invalid Content", True, "Invalid content correctly rejected with 400")
-            else:
-                self.log_test("Parse File - Invalid Content", False, f"Expected 400 for invalid content, got {response.status_code}")
-                all_tests_passed = False
-        except Exception as e:
-            self.log_test("Parse File - Invalid Content", False, f"Request failed: {str(e)}")
-            all_tests_passed = False
-        
-        return all_tests_passed
-
-    def test_cors_headers(self) -> bool:
-        """Test CORS headers are present"""
-        try:
-            response = requests.options(f"{self.api_url}/health", timeout=10)
+            data = response.json()
             
-            cors_headers = [
-                'Access-Control-Allow-Origin',
-                'Access-Control-Allow-Methods',
-                'Access-Control-Allow-Headers'
+            # Extract platform names from the nested structure
+            email_platforms = [p["name"] for p in data.get("platforms", {}).get("email", [])]
+            phone_platforms = [p["name"] for p in data.get("platforms", {}).get("phone", [])]
+            all_platforms = email_platforms + phone_platforms
+            
+            # Old platforms that should NOT exist
+            old_platforms = [
+                "uber_eats", "deliveroo", "ebay", "discord", "instagram", 
+                "facebook", "linkedin", "github", "reddit", "tiktok"
             ]
             
-            present_headers = [header for header in cors_headers if header in response.headers]
+            found_old = []
+            for old_platform in old_platforms:
+                if old_platform in all_platforms:
+                    found_old.append(old_platform)
             
-            if len(present_headers) >= 1:  # At least one CORS header should be present
-                self.log_test("CORS Headers", True, f"CORS headers present: {present_headers}")
-                return True
-            else:
-                self.log_test("CORS Headers", False, "No CORS headers found")
-                return False
-                
+            if found_old:
+                await self.log_test("Old platforms removed", False, f"Found old platforms that should be removed: {found_old}")
+                return
+            
+            await self.log_test("Old platforms removed", True, "No old platforms found - cleanup successful")
+            
         except Exception as e:
-            self.log_test("CORS Headers", False, f"Request failed: {str(e)}")
-            return False
-
-    def run_all_tests(self) -> Dict[str, Any]:
-        """Run all backend tests with focus on aggressive auto-threading scaling"""
-        print("🚀 Starting FAST Backend API Tests - Aggressive Auto-Threading Scaling")
-        print(f"📍 Testing against: {self.base_url}")
-        print("=" * 80)
+            await self.log_test("Old platforms check", False, f"Exception: {str(e)}")
+    
+    async def run_all_tests(self):
+        """Run all backend tests"""
+        print("🚀 Starting Backend API Tests")
+        print(f"Backend URL: {BACKEND_URL}")
+        print("=" * 60)
         
-        # Test basic endpoints first
-        self.test_health_endpoint()
-        self.test_platforms_endpoint()
+        # Test 1: Platform list verification
+        await self.test_platforms_endpoint()
         
-        # Test aggressive auto-threading scaling (main focus)
-        print("\n🎯 AGGRESSIVE AUTO-THREADING SCALING TESTS")
-        print("-" * 50)
-        self.test_thread_config_no_params()
-        self.test_aggressive_thread_scaling()
+        # Test 2: Health check
+        await self.test_health_endpoint()
         
-        # Test verification with new dynamic threading
-        print("\n🔍 VERIFICATION WITH DYNAMIC THREADING")
-        print("-" * 50)
-        self.test_verify_endpoint()
+        # Test 3: Email verification
+        await self.test_email_verification()
         
-        # Test other endpoints
-        print("\n📁 FILE PROCESSING TESTS")
-        print("-" * 50)
-        self.test_parse_file_endpoint()
+        # Test 4: Phone verification  
+        await self.test_phone_verification()
         
-        print("\n⚠️  ERROR HANDLING TESTS")
-        print("-" * 50)
-        self.test_error_handling()
+        # Test 5: Verify old platforms removed
+        await self.test_no_old_platforms()
         
         # Summary
-        print("\n" + "=" * 80)
-        print(f"📊 Test Summary: {self.tests_passed}/{self.tests_run} tests passed")
+        print("\n" + "=" * 60)
+        print("📊 TEST SUMMARY")
+        print("=" * 60)
         
-        success_rate = (self.tests_passed / self.tests_run * 100) if self.tests_run > 0 else 0
-        print(f"✨ Success Rate: {success_rate:.1f}%")
+        total_tests = len(self.test_results)
+        passed_tests = len([t for t in self.test_results if t["success"]])
+        failed_tests = len(self.failed_tests)
         
-        if self.tests_passed == self.tests_run:
-            print("🎉 All tests passed! Aggressive auto-threading scaling is working correctly.")
+        print(f"Total Tests: {total_tests}")
+        print(f"Passed: {passed_tests}")
+        print(f"Failed: {failed_tests}")
+        
+        if self.failed_tests:
+            print(f"\n❌ FAILED TESTS:")
+            for failed_test in self.failed_tests:
+                print(f"  - {failed_test}")
         else:
-            print("⚠️  Some tests failed. Check the details above.")
-            
-            # Show failed tests
-            failed_tests = [result for result in self.test_results if not result["success"]]
-            if failed_tests:
-                print("\n❌ FAILED TESTS:")
-                for test in failed_tests:
-                    print(f"  - {test['test']}: {test['details']}")
+            print(f"\n✅ ALL TESTS PASSED!")
         
-        return {
-            "total_tests": self.tests_run,
-            "passed_tests": self.tests_passed,
-            "success_rate": success_rate,
-            "test_results": self.test_results
-        }
+        await self.client.aclose()
+        
+        return failed_tests == 0
 
-def main():
-    """Main test execution"""
-    tester = FASTAPITester()
-    results = tester.run_all_tests()
+async def main():
+    """Main test runner"""
+    tester = BackendTester()
+    success = await tester.run_all_tests()
     
-    # Return appropriate exit code
-    return 0 if results["passed_tests"] == results["total_tests"] else 1
+    if not success:
+        sys.exit(1)
+    
+    print("\n🎉 Backend API testing completed successfully!")
 
 if __name__ == "__main__":
-    sys.exit(main())
+    asyncio.run(main())

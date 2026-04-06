@@ -125,41 +125,12 @@ app = FastAPI(title="FAST - Identity Checker API")
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Import holehe modules for email
+# Import holehe modules for email (only kept services)
 from holehe.modules.shopping.amazon import amazon
-from holehe.modules.shopping.ebay import ebay
-from holehe.modules.social_media.discord import discord
-from holehe.modules.social_media.instagram import instagram as holehe_instagram
 from holehe.modules.social_media.twitter import twitter
-from holehe.modules.social_media.pinterest import pinterest
-from holehe.modules.social_media.snapchat import snapchat as holehe_snapchat
-from holehe.modules.social_media.tumblr import tumblr
 from holehe.modules.music.spotify import spotify
-from holehe.modules.programing.github import github
-from holehe.modules.mails.google import google
-from holehe.modules.mails.yahoo import yahoo
-from holehe.modules.mails.protonmail import protonmail
-from holehe.modules.software.adobe import adobe
-from holehe.modules.software.docker import docker as docker_check
-from holehe.modules.software.office365 import office365
-from holehe.modules.payment.venmo import venmo
-from holehe.modules.products.nike import nike
-from holehe.modules.learning.quora import quora
-from holehe.modules.cms.wordpress import wordpress
-from holehe.modules.transport.blablacar import blablacar
-from holehe.modules.social_media.imgur import imgur
-from holehe.modules.social_media.patreon import patreon
-from holehe.modules.music.soundcloud import soundcloud
-from holehe.modules.software.lastpass import lastpass
-from holehe.modules.software.firefox import firefox
-from holehe.modules.programing.codecademy import codecademy
-from holehe.modules.crowfunding.buymeacoffee import buymeacoffee
-from holehe.modules.products.eventbrite import eventbrite
-from holehe.modules.social_media.strava import strava
 
 # Import ignorant modules for phone
-from ignorant.modules.social_media.snapchat import snapchat as ignorant_snapchat
-from ignorant.modules.social_media.instagram import instagram as ignorant_instagram
 from ignorant.modules.shopping.amazon import amazon as ignorant_amazon
 
 
@@ -635,57 +606,160 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": str(e)[:50]}
 
 
-async def check_uber_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Uber/Uber Eats - NOTE: Uber no longer reveals if accounts exist for security"""
+async def check_disney_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Disney+ via login/forgot password - Works with Emergent rotating IPs (proxy optional)"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "api", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "api", "reason": "no_active_proxy"}
-    
-    # Uber has implemented strong privacy protection - they no longer reveal
-    # whether an account exists or not. All forgot-password/login attempts
-    # return the same generic response regardless of whether the email exists.
-    # This is a security measure by Uber to prevent email enumeration.
-    
-    proxy_manager.mark_success(proxy_info["proxy_id"])
-    return {
-        "exists": False, 
-        "rate_limited": False, 
-        "unverifiable": True, 
-        "domain": "uber.com", 
-        "method": "api", 
-        "reason": "uber_privacy_protection"
-    }
-
-
-async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via forgot password with proxy + curl_cffi"""
-    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "no_active_proxy"}
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
     try:
         from curl_cffi.requests import AsyncSession
         
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
+        # Use proxy if available, otherwise direct connection (Emergent rotating IPs)
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        async with AsyncSession(**session_kwargs) as session:
+            # Disney+ uses BAM Tech API for authentication
+            # Step 1: Get a guest token
+            token_resp = await session.post(
+                "https://global.edge.bamgrid.com/token",
+                headers={
+                    "Authorization": "Bearer ZGlzbmV5JmFuZHJvaWQmMS4wLjA.bkeb0m230uUhv8qrAXuNu39tbE_mD5EEhM_NAcohjyA",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+                    "subject_token_type": "urn:bamtech:params:oauth:token-type:device",
+                    "platform": "browser",
+                },
+                timeout=15
+            )
+            
+            if token_resp.status_code != 200:
+                # Try alternative: direct forgot password page
+                resp = await session.get("https://www.disneyplus.com/forgot-password", timeout=15)
+                
+                if resp.status_code == 403:
+                    if proxy_info:
+                        proxy_manager.mark_failure(proxy_info["proxy_id"])
+                    return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+                
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "token_failed"}
+            
+            try:
+                token_data = token_resp.json()
+                access_token = token_data.get("access_token", "")
+            except Exception:
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "token_parse_error"}
+            
+            if not access_token:
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "no_token"}
+            
+            # Step 2: Check email via identity endpoint
+            check_resp = await session.post(
+                "https://global.edge.bamgrid.com/idp/check",
+                json={"email": email},
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                    "Origin": "https://www.disneyplus.com",
+                    "Referer": "https://www.disneyplus.com/",
+                },
+                timeout=15
+            )
+            
+            if check_resp.status_code == 200:
+                try:
+                    check_data = check_resp.json()
+                    # If "operations" contains "Register" -> email NOT registered (new user)
+                    # If "operations" contains "Login" -> email IS registered
+                    operations = check_data.get("operations", [])
+                    if isinstance(operations, list):
+                        op_types = [op.get("type", "") if isinstance(op, dict) else str(op) for op in operations]
+                    else:
+                        op_types = [str(operations)]
+                    
+                    if any("Login" in t for t in op_types):
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+                    
+                    if any("Register" in t for t in op_types):
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+                    
+                    # Fallback: check for isRegistered field
+                    if check_data.get("isRegistered") == True:
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+                    elif check_data.get("isRegistered") == False:
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+                        
+                except Exception:
+                    pass
+            
+            if check_resp.status_code == 429:
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+            
+            if check_resp.status_code == 403:
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "blocked"}
+            
+            if proxy_info:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
+    
+    except asyncio.TimeoutError:
+        logging.error(f"Disney+ check timeout for {email}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "timeout"}
+    except Exception as e:
+        logging.error(f"Disney+ check error: {e}")
+        if proxy_info:
+            proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": str(e)[:50]}
+
+
+async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Binance via forgot password - Works with Emergent rotating IPs (proxy optional)"""
+    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
+    
+    try:
+        from curl_cffi.requests import AsyncSession
+        
+        # Use proxy if available, otherwise direct connection (Emergent rotating IPs)
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        async with AsyncSession(**session_kwargs) as session:
             # Visit forgot password page first for cookies
-            resp = await session.get("https://accounts.binance.com/en/forgot-password", timeout=30)
+            resp = await session.get("https://accounts.binance.com/en/forgot-password", timeout=20)
             
             if resp.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password", "reason": "ip_blocked"}
             
             if resp.status_code != 200:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
             
             # Try forgot password endpoint
@@ -698,7 +772,7 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
                     "Origin": "https://accounts.binance.com",
                     "Referer": "https://accounts.binance.com/en/forgot-password",
                 },
-                timeout=30
+                timeout=20
             )
             
             if resp2.status_code == 200:
@@ -706,29 +780,35 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
                     result = resp2.json()
                     # If success=true, email was sent = account exists
                     if result.get("success"):
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
                         return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
                     # Check error message
                     msg = str(result.get("message", "")).lower()
                     code = str(result.get("code", "")).lower()
                     if "not exist" in msg or "not found" in msg or "not registered" in msg:
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
+                        if proxy_info:
+                            proxy_manager.mark_success(proxy_info["proxy_id"])
                         return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
                     if "captcha" in msg or "verify" in msg:
-                        proxy_manager.mark_failure(proxy_info["proxy_id"])
+                        if proxy_info:
+                            proxy_manager.mark_failure(proxy_info["proxy_id"])
                         return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "captcha"}
                 except Exception:
                     pass
             
             if resp2.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
             
             if resp2.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "blocked"}
             
-            proxy_manager.mark_success(proxy_info["proxy_id"])
+            if proxy_info:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
             return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
     
     except asyncio.TimeoutError:
@@ -740,34 +820,35 @@ async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         logging.error(f"Binance check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": str(e)[:50]}
 
 
 async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via forgot password with proxy + curl_cffi"""
+    """Check Coinbase via forgot password - Works with Emergent rotating IPs (proxy optional)"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "no_active_proxy"}
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
     try:
         from curl_cffi.requests import AsyncSession
         import re
         
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
-            # Visit login.coinbase.com forgot password page (confirmed working)
-            resp = await session.get("https://login.coinbase.com/forgot-password", timeout=30)
+        # Use proxy if available, otherwise direct connection (Emergent rotating IPs)
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        async with AsyncSession(**session_kwargs) as session:
+            # Visit login.coinbase.com forgot password page
+            resp = await session.get("https://login.coinbase.com/forgot-password", timeout=20)
             
             if resp.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password", "reason": "ip_blocked"}
             
             if resp.status_code != 200:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
             
             # Extract CSRF token if present
@@ -788,37 +869,44 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
                     "Origin": "https://login.coinbase.com",
                     "Referer": "https://login.coinbase.com/forgot-password",
                 },
-                timeout=30
+                timeout=20,
+                allow_redirects=True
             )
             
             text_lower = resp2.text.lower() if resp2.text else ""
             final_url = str(resp2.url).lower()
             
             if resp2.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
             # Check for "email sent" signals = account EXISTS
             if any(kw in text_lower for kw in ['email sent', 'check your email', 'sent you', 'reset link', 'we sent']):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
             # Check for success page redirect
             if 'email-sent' in final_url or 'success' in final_url or 'check-email' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
             # Check for "account not found" signals
             if any(kw in text_lower for kw in ['not found', "can't find", 'no account', 'does not exist', 'invalid email']):
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
-            # If we got 200 and still on forgot-password, assume not found
-            if resp2.status_code == 200 and 'forgot-password' in final_url:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
+            # If we got 200 and still on forgot-password, Coinbase sends reset email regardless (privacy)
+            if resp2.status_code == 200:
+                if proxy_info:
+                    proxy_manager.mark_success(proxy_info["proxy_id"])
                 return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
             
-            proxy_manager.mark_success(proxy_info["proxy_id"])
+            if proxy_info:
+                proxy_manager.mark_success(proxy_info["proxy_id"])
             return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
     
     except asyncio.TimeoutError:
@@ -830,135 +918,11 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
         logging.error(f"Coinbase check error: {e}")
         if proxy_info:
             proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "error"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": str(e)[:50]}
 
-
-async def check_deliveroo_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Deliveroo via login page with proxy + curl_cffi"""
-    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "no_active_proxy"}
-    
-    try:
-        from curl_cffi.requests import AsyncSession
-        
-        async with AsyncSession(impersonate="chrome120", proxy=proxy_info["proxy_url"], timeout=45) as session:
-            # Use deliveroo.com (international) which is accessible
-            resp = await session.get("https://deliveroo.com/login", timeout=30)
-            
-            if resp.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check", "reason": "ip_blocked"}
-            
-            if resp.status_code != 200:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": f"status_{resp.status_code}"}
-            
-            # Try login with wrong password - if account exists, we get "wrong password"
-            # If not exists, we get "account not found"
-            resp2 = await session.post(
-                "https://consumer-ow-api.deliveroo.com/orderapp/v1/login",
-                json={
-                    "email_address": email,
-                    "password": "WrongPass123!"
-                },
-                headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "Origin": "https://deliveroo.com",
-                    "Referer": "https://deliveroo.com/login",
-                },
-                timeout=30
-            )
-            
-            text_lower = resp2.text.lower() if resp2.text else ""
-            
-            if resp2.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-            
-            if resp2.status_code == 403:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "blocked"}
-            
-            # 401 with "incorrect password" = account EXISTS
-            if resp2.status_code == 401:
-                if any(kw in text_lower for kw in ['password', 'incorrect', 'wrong', 'invalid credentials']):
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-            
-            # 200 = somehow logged in = account EXISTS
-            if resp2.status_code == 200:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-            
-            # 400/404 = account not found
-            if resp2.status_code in [400, 404]:
-                if any(kw in text_lower for kw in ['not found', 'no account', 'does not exist', "doesn't exist"]):
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-                # 404 likely means endpoint changed or not found
-                if resp2.status_code == 404:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-            
-            proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "login_check"}
-    
-    except asyncio.TimeoutError:
-        logging.error(f"Deliveroo check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "timeout"}
-    except Exception as e:
-        logging.error(f"Deliveroo check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "login_check", "reason": "error"}
 
 
 # ============ PHONE NUMBER CHECKS ============
-
-async def check_snapchat_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    try:
-        out = []
-        await ignorant_snapchat(phone, country_code, client, out)
-        if out and len(out) > 0:
-            result = out[0]
-            return {
-                "exists": result.get("exists", False),
-                "rate_limited": result.get("rateLimit", False),
-                "domain": "snapchat.com",
-                "method": "phone_register"
-            }
-        return {"exists": False, "rate_limited": True, "domain": "snapchat.com", "method": "phone_register"}
-    except Exception as e:
-        logging.error(f"Snapchat phone check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "snapchat.com", "method": "phone_register"}
-
-
-async def check_instagram_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    try:
-        out = []
-        await ignorant_instagram(phone, client, out)
-        if out and len(out) > 0:
-            result = out[0]
-            return {
-                "exists": result.get("exists", False),
-                "rate_limited": result.get("rateLimit", False),
-                "domain": "instagram.com",
-                "method": "phone_lookup"
-            }
-        return {"exists": False, "rate_limited": True, "domain": "instagram.com", "method": "phone_lookup"}
-    except Exception as e:
-        logging.error(f"Instagram phone check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "instagram.com", "method": "phone_lookup"}
-
 
 async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
     try:
@@ -978,174 +942,381 @@ async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str,
         return {"exists": False, "rate_limited": True, "domain": "amazon.com", "method": "phone_lookup"}
 
 
-async def check_uber_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+async def check_netflix_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Netflix via phone-based forgot password - Emergent IPs (proxy optional)"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "no_active_proxy"}
+    try:
+        from curl_cffi.requests import AsyncSession
+        import codecs
+        
+        session_kwargs = {"impersonate": "chrome120", "timeout": 20}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        async with AsyncSession(**session_kwargs) as session:
+            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=15)
+            
+            if resp.status_code != 200:
+                if proxy_info:
+                    proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "phone_forgot"}
+            
+            import re
+            auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
+            auth_url = codecs.decode(auth_match.group(1), 'unicode_escape') if auth_match else ""
+            
+            if not phone.startswith('+'):
+                phone = '+' + phone
+            
+            resp2 = await session.post(
+                "https://www.netflix.com/LoginHelp",
+                data={'email': phone, 'action': 'loginHelpAction', 'authURL': auth_url, 'flow': 'loginHelp'},
+                headers={'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.netflix.com/LoginHelp', 'Origin': 'https://www.netflix.com'},
+                timeout=15, allow_redirects=True
+            )
+            
+            final_url = str(resp2.url).lower()
+            text_lower = resp2.text.lower()
+            
+            if '/notfound' in final_url:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
+            
+            if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
+            
+            if any(kw in text_lower for kw in ['sms sent', 'text sent', 'check your phone', 'email sent', 'we sent']):
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
+            
+            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "introuvable"]):
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
+    except Exception as e:
+        logging.error(f"Netflix phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "phone_forgot", "reason": str(e)[:50]}
+
+
+async def check_binance_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Binance via phone forgot password - Emergent IPs (proxy optional)"""
+    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
     try:
         from curl_cffi.requests import AsyncSession
         
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
         if not phone.startswith('+'):
             phone = '+' + phone
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
-            resp = await session.get("https://auth.uber.com/v2/")
+        async with AsyncSession(**session_kwargs) as session:
+            resp = await session.get("https://accounts.binance.com/en/forgot-password", timeout=20)
+            if resp.status_code != 200:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "phone_forgot"}
+            
+            resp2 = await session.post(
+                "https://accounts.binance.com/bapi/accounts/v1/public/account/password/reset/send",
+                json={"mobile": phone, "type": "mobile"},
+                headers={"Content-Type": "application/json", "clienttype": "web", "Origin": "https://accounts.binance.com", "Referer": "https://accounts.binance.com/en/forgot-password"},
+                timeout=20
+            )
+            
+            if resp2.status_code == 200:
+                try:
+                    result = resp2.json()
+                    if result.get("success"):
+                        if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
+                    msg = str(result.get("message", "")).lower()
+                    if "not exist" in msg or "not found" in msg or "not registered" in msg:
+                        if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
+                except Exception:
+                    pass
+            
+            if resp2.status_code == 429:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
+    except Exception as e:
+        logging.error(f"Binance phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "phone_forgot", "reason": str(e)[:50]}
+
+
+async def check_coinbase_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Coinbase via phone - Emergent IPs (proxy optional)"""
+    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
+    
+    try:
+        from curl_cffi.requests import AsyncSession
+        
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        
+        async with AsyncSession(**session_kwargs) as session:
+            resp = await session.get("https://login.coinbase.com/forgot-password", timeout=20)
+            if resp.status_code != 200:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "phone_forgot"}
             
             import re
             csrf = ""
-            for key, val in resp.cookies.items():
-                if "csrf" in key.lower():
-                    csrf = val
-                    break
+            csrf_match = re.search(r'name="csrf[_-]?token"[^>]*value="([^"]+)"', resp.text, re.I)
+            if csrf_match:
+                csrf = csrf_match.group(1)
             
             resp2 = await session.post(
-                "https://auth.uber.com/v2/public/sdk/authenticate",
-                json={
-                    "phoneNumber": phone,
-                    "requestContext": {"deviceId": str(uuid.uuid4())},
-                    "oauthClientId": "uber-web"
-                },
-                headers={
-                    "Content-Type": "application/json",
-                    "x-csrf-token": csrf or "x",
-                    "Origin": "https://auth.uber.com",
-                    "Referer": "https://auth.uber.com/v2/",
-                },
+                "https://login.coinbase.com/forgot-password",
+                data={"email": phone, "csrf_token": csrf},
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": "https://login.coinbase.com", "Referer": "https://login.coinbase.com/forgot-password"},
+                timeout=20, allow_redirects=True
             )
             
-            content_type = resp2.headers.get("content-type", "")
+            text_lower = resp2.text.lower() if resp2.text else ""
+            final_url = str(resp2.url).lower()
             
-            if resp2.status_code == 200 and "application/json" in content_type:
-                try:
-                    result = resp2.json()
-                    if result.get("nextStep") == "OTP" or "otp" in str(result).lower():
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
-                except Exception:
-                    pass
-            elif resp2.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
-            elif resp2.status_code in [403, 404] or "text/html" in content_type:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "blocked"}
+            if any(kw in text_lower for kw in ['sent', 'check your', 'reset link']):
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
             
-            proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "uber.com", "method": "phone_auth"}
+            if 'email-sent' in final_url or 'success' in final_url:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
     except Exception as e:
-        logging.error(f"Uber phone check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "uber.com", "method": "phone_auth", "reason": "error"}
+        logging.error(f"Coinbase phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "phone_forgot", "reason": str(e)[:50]}
 
 
-async def check_deliveroo_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+async def check_spotify_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Spotify via phone-based password reset - Emergent IPs (proxy optional)"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    
-    if not has_proxy:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "no_proxy"}
-    
-    proxy_info = _get_proxy_for_curl_cffi()
-    if not proxy_info:
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "no_active_proxy"}
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
     try:
         from curl_cffi.requests import AsyncSession
         
+        session_kwargs = {"impersonate": "chrome120", "timeout": 20}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
         if not phone.startswith('+'):
             phone = '+' + phone
         
-        async with AsyncSession(impersonate="chrome", proxy=proxy_info["proxy_url"], timeout=20) as session:
+        async with AsyncSession(**session_kwargs) as session:
+            # Try Spotify password reset with phone number
+            resp = await session.get("https://accounts.spotify.com/en/password-reset", timeout=15)
+            if resp.status_code != 200:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "spotify.com", "method": "phone_forgot"}
+            
+            import re
+            csrf = ""
+            csrf_match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', resp.text, re.I)
+            if not csrf_match:
+                csrf_match = re.search(r'"csrfToken"\s*:\s*"([^"]+)"', resp.text)
+            if csrf_match:
+                csrf = csrf_match.group(1)
+            
+            resp2 = await session.post(
+                "https://accounts.spotify.com/en/password-reset",
+                data={"email_or_username": phone, "csrf_token": csrf},
+                headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": "https://accounts.spotify.com", "Referer": "https://accounts.spotify.com/en/password-reset"},
+                timeout=15, allow_redirects=True
+            )
+            
+            text_lower = resp2.text.lower() if resp2.text else ""
+            final_url = str(resp2.url).lower()
+            
+            if 'password-reset-complete' in final_url or 'check your' in text_lower or 'sent' in text_lower:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "spotify.com", "method": "phone_forgot"}
+            
+            if any(kw in text_lower for kw in ['not find', "doesn't match", 'no account', "n'existe pas"]):
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "spotify.com", "method": "phone_forgot"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "spotify.com", "method": "phone_forgot"}
+    except Exception as e:
+        logging.error(f"Spotify phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "spotify.com", "method": "phone_forgot", "reason": str(e)[:50]}
+
+
+async def check_twitter_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Twitter/X via phone-based password reset - Emergent IPs (proxy optional)"""
+    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
+    
+    try:
+        from curl_cffi.requests import AsyncSession
+        
+        session_kwargs = {"impersonate": "chrome120", "timeout": 20}
+        if proxy_info:
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        
+        async with AsyncSession(**session_kwargs) as session:
+            # Twitter/X uses begin_password_reset API
             resp = await session.post(
-                "https://consumer-ow-api.deliveroo.com/orderapp/v1/check-phone",
-                json={"phone_number": phone},
+                "https://api.twitter.com/i/users/begin_password_reset.json",
+                data={"phone_number": phone},
                 headers={
-                    "Content-Type": "application/json",
-                    "Accept": "application/json",
-                    "Origin": "https://deliveroo.fr",
+                    "Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": random.choice(USER_AGENTS),
                 },
+                timeout=15
             )
             
             if resp.status_code == 200:
                 try:
-                    result = resp.json()
-                    if result.get("registered") or result.get("exists"):
-                        proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
+                    data = resp.json()
+                    if data.get("status") == "ok":
+                        if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
                 except Exception:
                     pass
-            elif resp.status_code == 429:
-                proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
-            elif resp.status_code == 404:
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "endpoint_removed"}
             
-            proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "deliveroo.com", "method": "phone_check"}
+            if resp.status_code == 400:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
+            
+            if resp.status_code == 429:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
     except Exception as e:
-        logging.error(f"Deliveroo phone check error: {e}")
+        logging.error(f"Twitter phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "twitter.com", "method": "phone_reset", "reason": str(e)[:50]}
+
+
+async def check_disney_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Disney+ via phone - Emergent IPs (proxy optional)"""
+    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
+    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
+    
+    try:
+        from curl_cffi.requests import AsyncSession
+        
+        session_kwargs = {"impersonate": "chrome120", "timeout": 30}
         if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "deliveroo.com", "method": "phone_check", "reason": "error"}
+            session_kwargs["proxy"] = proxy_info["proxy_url"]
+        
+        if not phone.startswith('+'):
+            phone = '+' + phone
+        
+        async with AsyncSession(**session_kwargs) as session:
+            # Get guest token first
+            token_resp = await session.post(
+                "https://global.edge.bamgrid.com/token",
+                headers={
+                    "Authorization": "Bearer ZGlzbmV5JmFuZHJvaWQmMS4wLjA.bkeb0m230uUhv8qrAXuNu39tbE_mD5EEhM_NAcohjyA",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={"grant_type": "urn:ietf:params:oauth:grant-type:token-exchange", "subject_token_type": "urn:bamtech:params:oauth:token-type:device", "platform": "browser"},
+                timeout=15
+            )
+            
+            if token_resp.status_code != 200:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": "token_failed"}
+            
+            try:
+                access_token = token_resp.json().get("access_token", "")
+            except Exception:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": "token_parse"}
+            
+            if not access_token:
+                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": "no_token"}
+            
+            check_resp = await session.post(
+                "https://global.edge.bamgrid.com/idp/check",
+                json={"phoneNumber": phone},
+                headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json", "Origin": "https://www.disneyplus.com", "Referer": "https://www.disneyplus.com/"},
+                timeout=15
+            )
+            
+            if check_resp.status_code == 200:
+                try:
+                    check_data = check_resp.json()
+                    operations = check_data.get("operations", [])
+                    op_types = [op.get("type", "") if isinstance(op, dict) else str(op) for op in operations] if isinstance(operations, list) else [str(operations)]
+                    
+                    if any("Login" in t for t in op_types):
+                        if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
+                    if any("Register" in t for t in op_types):
+                        if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
+                except Exception:
+                    pass
+            
+            if check_resp.status_code == 429:
+                if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
+            
+            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
+    except Exception as e:
+        logging.error(f"Disney+ phone check error: {e}")
+        if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": str(e)[:50]}
 
 
 # ============ PLATFORM CONFIGS ============
 
 HOLEHE_MODULES = {
     "amazon": {"func": amazon, "category": "Shopping"},
-    "ebay": {"func": ebay, "category": "Shopping"},
-    "discord": {"func": discord, "category": "Social"},
-    "instagram": {"func": holehe_instagram, "category": "Social"},
     "twitter": {"func": twitter, "category": "Social"},
-    "pinterest": {"func": pinterest, "category": "Social"},
-    "snapchat": {"func": holehe_snapchat, "category": "Social"},
-    "tumblr": {"func": tumblr, "category": "Social"},
-    "imgur": {"func": imgur, "category": "Social"},
-    "patreon": {"func": patreon, "category": "Social"},
-    "strava": {"func": strava, "category": "Social"},
     "spotify": {"func": spotify, "category": "Streaming"},
-    "soundcloud": {"func": soundcloud, "category": "Music"},
-    "github": {"func": github, "category": "Dev"},
-    "docker": {"func": docker_check, "category": "Dev"},
-    "codecademy": {"func": codecademy, "category": "Learning"},
-    "google": {"func": google, "category": "Email"},
-    "yahoo": {"func": yahoo, "category": "Email"},
-    "protonmail": {"func": protonmail, "category": "Email"},
-    "adobe": {"func": adobe, "category": "Software"},
-    "office365": {"func": office365, "category": "Software"},
-    "lastpass": {"func": lastpass, "category": "Software"},
-    "firefox": {"func": firefox, "category": "Software"},
-    "venmo": {"func": venmo, "category": "Payment"},
-    "nike": {"func": nike, "category": "Shopping"},
-    "quora": {"func": quora, "category": "Social"},
-    "wordpress": {"func": wordpress, "category": "CMS"},
-    "blablacar": {"func": blablacar, "category": "Transport"},
-    "buymeacoffee": {"func": buymeacoffee, "category": "Crowdfunding"},
-    "eventbrite": {"func": eventbrite, "category": "Events"},
 }
 
 CUSTOM_EMAIL_PLATFORMS = {
-    # Note: Certaines plateformes peuvent nécessiter des proxies résidentiels pour éviter les rate limits
-    # Netflix fonctionne avec les IP rotatifs d'Emergent (needs_proxy: False)
     "netflix": {"func": check_netflix_custom, "category": "Streaming", "needs_proxy": False},
-    "uber_eats": {"func": check_uber_custom, "category": "Food", "needs_proxy": True},
-    "binance": {"func": check_binance_custom, "category": "Crypto", "needs_proxy": True},
-    "coinbase": {"func": check_coinbase_custom, "category": "Crypto", "needs_proxy": True},
-    "deliveroo": {"func": check_deliveroo_custom, "category": "Food", "needs_proxy": True},
+    "binance": {"func": check_binance_custom, "category": "Crypto", "needs_proxy": False},
+    "coinbase": {"func": check_coinbase_custom, "category": "Crypto", "needs_proxy": False},
+    "disney_plus": {"func": check_disney_custom, "category": "Streaming", "needs_proxy": False},
 }
 
 PHONE_PLATFORMS = {
-    "snapchat": {"func": check_snapchat_phone, "category": "Social", "needs_country_code": True},
-    "instagram": {"func": check_instagram_phone, "category": "Social", "needs_country_code": False},
     "amazon": {"func": check_amazon_phone, "category": "Shopping", "needs_country_code": False},
-    "uber_eats": {"func": check_uber_phone, "category": "Food", "needs_country_code": False},
-    "deliveroo": {"func": check_deliveroo_phone, "category": "Food", "needs_country_code": False},
+    "netflix": {"func": check_netflix_phone, "category": "Streaming", "needs_country_code": False},
+    "binance": {"func": check_binance_phone, "category": "Crypto", "needs_country_code": False},
+    "coinbase": {"func": check_coinbase_phone, "category": "Crypto", "needs_country_code": False},
+    "spotify": {"func": check_spotify_phone, "category": "Streaming", "needs_country_code": False},
+    "twitter": {"func": check_twitter_phone, "category": "Social", "needs_country_code": False},
+    "disney_plus": {"func": check_disney_phone, "category": "Streaming", "needs_country_code": False},
 }
 
 ALL_EMAIL_PLATFORMS = list(HOLEHE_MODULES.keys()) + list(CUSTOM_EMAIL_PLATFORMS.keys())
@@ -1511,7 +1682,6 @@ async def test_proxies():
 
 async def process_job_batch(job_id: str, identifiers: List[str], batch_start: int, platforms_filter: Optional[List[str]] = None):
     """Process a batch of identifiers for a job"""
-    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
     
     async def verify_single(identifier: str):
         try:
