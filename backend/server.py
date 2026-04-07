@@ -528,13 +528,14 @@ def _get_proxy_for_curl_cffi() -> Optional[Dict[str, str]]:
         return {"proxy_url": proxy["url"], "proxy_id": proxy["id"]}
     return None
 
-def _build_session_kwargs(timeout: int = 20) -> dict:
+def _build_session_kwargs(timeout: int = 20, chrome_only: bool = False) -> dict:
     """Build curl_cffi session kwargs with rotating fingerprint + optional proxy"""
     has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
     proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
     
+    fp_list = CHROME_ONLY_FINGERPRINTS if chrome_only else BROWSER_FINGERPRINTS
     kwargs = {
-        "impersonate": _get_random_fingerprint(),
+        "impersonate": random.choice(fp_list),
         "timeout": timeout,
     }
     if proxy_info:
@@ -551,7 +552,7 @@ async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[st
         from curl_cffi.requests import AsyncSession
         import re
         
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20)
+        session_kwargs, proxy_info = _build_session_kwargs(timeout=20, chrome_only=True)
         
         async with AsyncSession(**session_kwargs) as session:
             # Get LoginHelp page
@@ -638,7 +639,7 @@ async def check_disney_custom(email: str, client: httpx.AsyncClient) -> Dict[str
     try:
         from curl_cffi.requests import AsyncSession
         
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
+        session_kwargs, proxy_info = _build_session_kwargs(timeout=30, chrome_only=True)
         
         async with AsyncSession(**session_kwargs) as session:
             # Disney+ uses BAM Tech API for authentication
@@ -1017,7 +1018,7 @@ async def check_netflix_phone(phone: str, client: httpx.AsyncClient) -> Dict[str
     async def _do_check():
         from curl_cffi.requests import AsyncSession
         import codecs
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20)
+        session_kwargs, proxy_info = _build_session_kwargs(timeout=20, chrome_only=True)
         
         try:
             nonlocal phone
@@ -1312,7 +1313,7 @@ async def check_disney_phone(phone: str, client: httpx.AsyncClient) -> Dict[str,
     
     async def _do_check():
         from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
+        session_kwargs, proxy_info = _build_session_kwargs(timeout=30, chrome_only=True)
         
         try:
             nonlocal phone
