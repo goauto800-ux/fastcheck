@@ -924,22 +924,24 @@ async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[s
 
 # ============ PHONE NUMBER CHECKS ============
 
-async def check_amazon_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+async def check_amazon_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
+    """Check Amazon via ignorant library - needs country_code and national_number separately"""
     try:
         out = []
-        await ignorant_amazon(phone, client, out)
+        await ignorant_amazon(phone, country_code, client, out)
         if out and len(out) > 0:
             result = out[0]
             return {
                 "exists": result.get("exists", False),
                 "rate_limited": result.get("rateLimit", False),
+                "unverifiable": False,
                 "domain": "amazon.com",
                 "method": "phone_lookup"
             }
-        return {"exists": False, "rate_limited": True, "domain": "amazon.com", "method": "phone_lookup"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "amazon.com", "method": "phone_lookup"}
     except Exception as e:
         logging.error(f"Amazon phone check error: {e}")
-        return {"exists": False, "rate_limited": True, "domain": "amazon.com", "method": "phone_lookup"}
+        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "amazon.com", "method": "phone_lookup"}
 
 
 async def check_netflix_phone(phone: str, client: httpx.AsyncClient) -> Dict[str, Any]:
@@ -1310,7 +1312,7 @@ CUSTOM_EMAIL_PLATFORMS = {
 }
 
 PHONE_PLATFORMS = {
-    "amazon": {"func": check_amazon_phone, "category": "Shopping", "needs_country_code": False},
+    "amazon": {"func": check_amazon_phone, "category": "Shopping", "needs_country_code": True},
     "netflix": {"func": check_netflix_phone, "category": "Streaming", "needs_country_code": False},
     "binance": {"func": check_binance_phone, "category": "Crypto", "needs_country_code": False},
     "coinbase": {"func": check_coinbase_phone, "category": "Crypto", "needs_country_code": False},
