@@ -492,6 +492,9 @@ def parse_phone_number(phone: str) -> tuple:
     for code, country in sorted(country_codes.items(), key=lambda x: -len(x[0])):
         if phone.startswith(code):
             national_number = phone[len(code):]
+            # Strip leading 0 from national number (e.g. +330698... → 698...)
+            if national_number.startswith('0'):
+                national_number = national_number[1:]
             return code, national_number, country
     
     if phone.startswith('0'):
@@ -953,61 +956,100 @@ async def _phone_check_with_retry(check_fn, *args, max_retries=MAX_PHONE_RETRIES
 
 
 async def check_amazon_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Amazon via signin page with curl_cffi + Emergent rotating IPs"""
+    """Check Amazon via signin page with curl_cffi + Emergent rotating IPs - regional Amazon"""
+    
+    # Map country codes to Amazon domains + assoc handles
+    AMAZON_CONFIGS = {
+        '33': ('www.amazon.fr', 'frflex'),
+        '1':  ('www.amazon.com', 'usflex'),
+        '44': ('www.amazon.co.uk', 'gbflex'),
+        '49': ('www.amazon.de', 'deflex'),
+        '39': ('www.amazon.it', 'itflex'),
+        '34': ('www.amazon.es', 'esflex'),
+        '31': ('www.amazon.nl', 'nlflex'),
+        '32': ('www.amazon.com.be', 'beflex'),
+        '351': ('www.amazon.es', 'esflex'),
+        '41': ('www.amazon.de', 'deflex'),
+    }
+    
+    domain, handle = AMAZON_CONFIGS.get(str(country_code), ('www.amazon.com', 'usflex'))
+    
+    # Try multiple phone formats
+    phone_formats = [
+        f"+{country_code}{phone}",        # +33698366832
+        f"0{phone}",                        # 0698366832 (national format)
+        f"{country_code}{phone}",           # 33698366832
+    ]
     
     async def _do_check():
         from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20)
+        from bs4 import BeautifulSoup
+        session_kwargs, proxy_info = _build_session_kwargs(timeout=25)
         
         try:
-            full_phone = str(country_code) + str(phone)
-            
             async with AsyncSession(**session_kwargs) as session:
-                # Step 1: Get signin page
-                url = "https://www.amazon.com/ap/signin?openid.pape.max_auth_age=0&openid.return_to=https%3A%2F%2Fwww.amazon.com%2F%3F_encoding%3DUTF8%26ref_%3Dnav_ya_signin&openid.identity=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.assoc_handle=usflex&openid.mode=checkid_setup&openid.claimed_id=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0%2Fidentifier_select&openid.ns=http%3A%2F%2Fspecs.openid.net%2Fauth%2F2.0&"
-                resp = await session.get(url, timeout=15)
+                for fmt in phone_formats:
+                    try:
+                        # Step 1: Get signin page via redirect
+                        resp = await session.get(f"https://{domain}/gp/sign-in.html", timeout=15)
+                        
+                        if resp.status_code != 200:
+                            continue
+                        
+                        # Step 2: Parse form
+                        body = BeautifulSoup(resp.text, 'html.parser')
+                        data = {}
+                        for inp in body.select('form input'):
+                            if 'name' in inp.attrs and 'value' in inp.attrs:
+                                data[inp['name']] = inp['value']
+                        
+                        if not data:
+                            continue
+                        
+                        data['email'] = fmt
+                        
+                        # Step 3: Get form action
+                        form_tag = body.find('form')
+                        action = form_tag.get('action', f'https://{domain}/ap/signin') if form_tag else f'https://{domain}/ap/signin'
+                        if not action.startswith('http'):
+                            action = f'https://{domain}{action}'
+                        
+                        # Step 4: Submit
+                        resp2 = await session.post(
+                            action,
+                            data=data,
+                            headers={
+                                'Content-Type': 'application/x-www-form-urlencoded',
+                                'Referer': str(resp.url),
+                                'Origin': f'https://{domain}',
+                            },
+                            timeout=15,
+                            allow_redirects=True
+                        )
+                        
+                        body2 = BeautifulSoup(resp2.text, 'html.parser')
+                        
+                        # Password prompt = account exists
+                        if body2.find("input", {"id": "ap_password"}) or body2.find("div", {"id": "auth-password-missing-alert"}):
+                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
+                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": domain, "method": "phone_signin"}
+                        
+                        # Captcha = rate limited, try next format
+                        if body2.find("img", {"id": "auth-captcha-image"}):
+                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
+                            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": domain, "method": "phone_signin"}
+                    
+                    except Exception:
+                        continue
                 
-                if resp.status_code != 200:
-                    if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": resp.status_code == 503, "unverifiable": resp.status_code != 503, "domain": "amazon.com", "method": "phone_signin"}
-                
-                # Step 2: Parse form fields
-                from bs4 import BeautifulSoup
-                body = BeautifulSoup(resp.text, 'html.parser')
-                data = {}
-                for inp in body.select('form input'):
-                    if 'name' in inp.attrs and 'value' in inp.attrs:
-                        data[inp['name']] = inp['value']
-                data['email'] = full_phone
-                
-                # Step 3: Submit signin
-                resp2 = await session.post(
-                    'https://www.amazon.com/ap/signin/',
-                    data=data,
-                    headers={
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'Referer': url,
-                        'Origin': 'https://www.amazon.com',
-                    },
-                    timeout=15,
-                    allow_redirects=True
-                )
-                
-                body2 = BeautifulSoup(resp2.text, 'html.parser')
-                
-                # Password prompt = account exists
-                if body2.find("div", {"id": "auth-password-missing-alert"}) or body2.find("input", {"id": "ap_password"}):
-                    if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "amazon.com", "method": "phone_signin"}
-                
-                # Error message = no account
+                # No format found the account
                 if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "amazon.com", "method": "phone_signin"}
+                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": domain, "method": "phone_signin"}
         
         except Exception as e:
             logging.error(f"Amazon phone check error: {e}")
             if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "amazon.com", "method": "phone_signin", "reason": str(e)[:50]}
+            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": domain, "method": "phone_signin", "reason": str(e)[:50]}
     
     return await _phone_check_with_retry(_do_check)
 
