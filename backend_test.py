@@ -11,7 +11,7 @@ import sys
 from typing import Dict, List, Any
 
 # Backend URL from frontend/.env
-BACKEND_URL = "https://app-kickoff-6.preview.emergentagent.com/api"
+BACKEND_URL = "https://test-runner-60.preview.emergentagent.com/api"
 
 # Expected platforms (exactly 7)
 EXPECTED_PLATFORMS = [
