@@ -5,38 +5,40 @@ import { toast } from "sonner";
 
 export default function TextPasteZone({ onVerify, disabled }) {
   const [text, setText] = useState("");
-  const parseIdentifiers = useCallback((input) => {
+  
+  const parseEmails = useCallback((input) => {
     if (!input.trim()) return [];
-    const items = input.split(/[\n,;\t\s]+/).map(s => s.trim()).filter(s => s.includes("@") || (s.match(/\d/g) || []).length >= 8);
-    return [...new Set(items)];
+    const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+    const matches = input.match(emailRegex) || [];
+    return [...new Set(matches.map(e => e.toLowerCase()))];
   }, []);
 
   const handleVerify = useCallback(() => {
-    const ids = parseIdentifiers(text);
-    if (ids.length === 0) { toast.error("Aucun email ou numéro valide détecté"); return; }
-    onVerify(ids);
-  }, [text, parseIdentifiers, onVerify]);
+    const emails = parseEmails(text);
+    if (emails.length === 0) { toast.error("Aucun email valide détecté"); return; }
+    onVerify(emails);
+  }, [text, parseEmails, onVerify]);
 
   const handlePaste = useCallback(async () => {
     try { const c = await navigator.clipboard.readText(); setText(p => p ? p + "\n" + c : c); toast.success("Collé"); }
     catch { toast.error("Presse-papiers inaccessible"); }
   }, []);
 
-  const count = parseIdentifiers(text).length;
+  const count = parseEmails(text).length;
 
   return (
     <div className="h-full">
       <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2 font-heading">
-        <Terminal className="w-4 h-4 text-[#FF00FF]" /> Coller du Texte
+        <Terminal className="w-4 h-4 text-[#06C167]" /> Coller des Emails
       </h3>
       <div className="relative">
         <textarea value={text} onChange={(e) => setText(e.target.value)}
-          placeholder={"Collez vos emails ou numéros ici...\n\nExemple:\nemail@example.com\n+33612345678\nuser@domain.fr"}
+          placeholder={"Collez vos emails ici...\n\nExemple:\nuser@example.com\ntest@gmail.com\ncombo@mail.fr:password123"}
           disabled={disabled}
-          className={`w-full h-[260px] rounded-xl p-4 font-mono text-sm resize-none bg-[#0C0C16] border border-white/10 text-[#00F0FF]/70 placeholder:text-gray-700 focus:outline-none focus:border-[#00F0FF]/40 focus:ring-1 focus:ring-[#00F0FF]/20 focus:shadow-[0_0_20px_rgba(0,240,255,0.08)] transition-all duration-300 ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
+          className={`w-full h-[260px] rounded-xl p-4 font-mono text-sm resize-none bg-[#0C0C16] border border-white/10 text-[#06C167]/70 placeholder:text-gray-700 focus:outline-none focus:border-[#06C167]/40 focus:ring-1 focus:ring-[#06C167]/20 transition-all duration-300 ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
           data-testid="text-input" />
         <div className="absolute bottom-3 left-4 text-[11px] text-gray-600">
-          {count > 0 && <span className="text-[#00F0FF]/50">{count} détecté(s)</span>}
+          {count > 0 && <span className="text-[#06C167]/50">{count} email(s) détecté(s)</span>}
         </div>
         <button onClick={handlePaste} disabled={disabled}
           className="absolute top-3 right-3 p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-500 hover:text-white transition-all border border-white/5" title="Coller" data-testid="paste-btn">
@@ -47,8 +49,8 @@ export default function TextPasteZone({ onVerify, disabled }) {
         {text && <Button variant="outline" size="sm" onClick={() => setText("")} disabled={disabled}
           className="border-white/10 text-gray-400 hover:text-white bg-transparent text-xs h-8" data-testid="clear-text-btn">Effacer</Button>}
         <Button size="sm" onClick={handleVerify} disabled={disabled || !text.trim()}
-          className="btn-click-effect bg-gradient-to-r from-[#00F0FF] to-[#8B5CF6] text-white font-bold text-xs h-8 px-5 hover:opacity-90 hover:shadow-[0_0_20px_rgba(0,240,255,0.4)]" data-testid="verify-submit-btn">
-          <Zap className="w-3.5 h-3.5 mr-1.5" /> Vérifier
+          className="btn-click-effect bg-[#06C167] text-white font-bold text-xs h-8 px-5 hover:bg-[#06C167]/80" data-testid="verify-submit-btn">
+          <Zap className="w-3.5 h-3.5 mr-1.5" /> Vérifier Uber Eats
         </Button>
       </div>
     </div>

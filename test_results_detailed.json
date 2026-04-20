@@ -1,0 +1,117 @@
+{
+  "summary": {
+    "passed": 6,
+    "total": 6,
+    "success_rate": 1.0
+  },
+  "tests": [
+    {
+      "test": "Health Check",
+      "success": true,
+      "details": "Status: healthy, Browser Ready: True",
+      "response_data": {
+        "status": "healthy",
+        "service": "Uber Eats Checker",
+        "browser_ready": true,
+        "proxies_active": 0,
+        "proxies_total": 0
+      },
+      "timestamp": 1776661184.8498542
+    },
+    {
+      "test": "Root Endpoint",
+      "success": true,
+      "details": "Service: Uber Eats Checker, Version: 1.0.0",
+      "response_data": {
+        "service": "Uber Eats Checker",
+        "version": "1.0.0",
+        "proxies_active": 0,
+        "proxies_total": 0
+      },
+      "timestamp": 1776661185.9018888
+    },
+    {
+      "test": "Add Proxy",
+      "success": true,
+      "details": "Added: 1, Success: True",
+      "response_data": {
+        "success": true,
+        "message": "1 proxies ajout\u00e9s, 0 \u00e9chou\u00e9s",
+        "added": 1,
+        "failed": 0,
+        "proxies": [
+          {
+            "id": "04b0bde0-69b3-4997-92af-0bc115ea2ded",
+            "host": "123.45.67.89",
+            "port": 8080,
+            "protocol": "http",
+            "has_auth": false,
+            "status": "active",
+            "requests": 0,
+            "successes": 0,
+            "failures": 0,
+            "added_at": "2026-04-20T04:59:46.933332+00:00"
+          }
+        ]
+      },
+      "timestamp": 1776661186.9481318
+    },
+    {
+      "test": "List Proxies",
+      "success": true,
+      "details": "Total: 1, Active: 1",
+      "response_data": {
+        "proxies": [
+          {
+            "id": "04b0bde0-69b3-4997-92af-0bc115ea2ded",
+            "host": "123.45.67.89",
+            "port": 8080,
+            "protocol": "http",
+            "has_auth": false,
+            "status": "active",
+            "requests": 0,
+            "successes": 0,
+            "failures": 0,
+            "added_at": "2026-04-20T04:59:46.933332+00:00"
+          }
+        ],
+        "total": 1,
+        "active": 1
+      },
+      "timestamp": 1776661187.9906943
+    },
+    {
+      "test": "Clear Proxies",
+      "success": true,
+      "details": "Success: True, Message: Tous les proxies supprim\u00e9s",
+      "response_data": {
+        "success": true,
+        "message": "Tous les proxies supprim\u00e9s"
+      },
+      "timestamp": 1776661189.0375748
+    },
+    {
+      "test": "Email Check",
+      "success": true,
+      "details": "Status: not_found, Exists: False, Platform: uber_eats, Time: 8.1s",
+      "response_data": {
+        "total": 1,
+        "found": 0,
+        "not_found": 1,
+        "captcha": 0,
+        "errors": 0,
+        "results": [
+          {
+            "email": "testfake12345@gmail.com",
+            "status": "not_found",
+            "exists": false,
+            "details": "Code sent to email + Tip (no account)",
+            "platform": "uber_eats"
+          }
+        ]
+      },
+      "timestamp": 1776661198.1029947
+    }
+  ],
+  "backend_url": "https://test-runner-60.preview.emergentagent.com/api"
+}

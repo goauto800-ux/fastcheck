@@ -1,19 +1,18 @@
 import { useState, useEffect } from "react";
-import { Cpu, Activity } from "lucide-react";
+import { Shield } from "lucide-react";
 import axios from "axios";
-import DiblowLogo from "./DiblowLogo";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 export default function Header() {
-  const [threadInfo, setThreadInfo] = useState(null);
+  const [healthInfo, setHealthInfo] = useState(null);
 
   useEffect(() => {
     const fetchInfo = async () => {
-      try { const r = await axios.get(`${BACKEND_URL}/api/config/threads`); setThreadInfo(r.data); } catch (e) {}
+      try { const r = await axios.get(`${BACKEND_URL}/api/health`); setHealthInfo(r.data); } catch (e) {}
     };
     fetchInfo();
-    const interval = setInterval(fetchInfo, 10000);
+    const interval = setInterval(fetchInfo, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -21,32 +20,31 @@ export default function Header() {
     <header className="sticky top-0 z-50 bg-[#05050A]/80 backdrop-blur-xl border-b border-white/10" data-testid="header">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
-          <DiblowLogo size="md" />
-
-          {/* Thread info */}
-          <div className="hidden sm:flex items-center gap-3">
-            {threadInfo && (
-              <>
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-xs font-mono text-gray-300">
-                  <Cpu className="w-3.5 h-3.5 text-[#00F0FF]" />
-                  <span className="text-[#00F0FF]">{threadInfo.max_concurrent_identifiers}</span>x threads
-                </div>
-                <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10 text-xs font-mono text-gray-300">
-                  <Activity className="w-3.5 h-3.5 text-[#FF00FF]" />
-                  <span className="text-[#FF00FF]">{threadInfo.max_concurrent_platforms}</span> checks
-                  {threadInfo.active_proxies > 0 && <span className="text-[#8B5CF6]"> · {threadInfo.active_proxies}p</span>}
-                </div>
-              </>
-            )}
+          {/* Logo */}
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#06C167] flex items-center justify-center text-white font-bold text-sm">
+              UE
+            </div>
+            <span className="text-lg font-bold text-white tracking-tight">
+              Uber<span className="text-[#06C167]">Check</span>
+            </span>
           </div>
 
           {/* Status */}
-          <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10">
-            <div className="relative">
-              <div className="w-2 h-2 rounded-full bg-[#00F0FF]" style={{boxShadow:'0 0 8px rgba(0,240,255,0.6)'}} />
-              <div className="absolute inset-0 w-2 h-2 rounded-full bg-[#00F0FF] animate-ping opacity-30" />
+          <div className="flex items-center gap-3">
+            {healthInfo && healthInfo.proxies_active > 0 && (
+              <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#06C167]/5 border border-[#06C167]/20 text-xs font-medium text-[#06C167]">
+                <Shield className="w-3.5 h-3.5" />
+                {healthInfo.proxies_active} proxy{healthInfo.proxies_active > 1 ? 's' : ''}
+              </div>
+            )}
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/[0.03] border border-white/10">
+              <div className="relative">
+                <div className="w-2 h-2 rounded-full bg-[#06C167]" style={{boxShadow:'0 0 8px rgba(6,193,103,0.6)'}} />
+                <div className="absolute inset-0 w-2 h-2 rounded-full bg-[#06C167] animate-ping opacity-30" />
+              </div>
+              <span className="text-xs font-medium text-[#06C167]">Online</span>
             </div>
-            <span className="text-xs font-medium text-[#00F0FF]">Online</span>
           </div>
         </div>
       </div>

@@ -17,7 +17,7 @@ export default function UploadZone({ onFileUpload, disabled }) {
   return (
     <div className="h-full">
       <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2 font-heading">
-        <UploadCloud className="w-4 h-4 text-[#00F0FF]" /> Upload Fichier
+        <UploadCloud className="w-4 h-4 text-[#06C167]" /> Upload Fichier
       </h3>
       <div
         className={`relative border border-dashed rounded-xl p-8 sm:p-10 flex flex-col items-center justify-center min-h-[260px] transition-all duration-300 cursor-pointer

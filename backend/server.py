@@ -15,101 +15,11 @@ import uuid
 from datetime import datetime, timezone
 import csv
 import io
-import httpx
-import multiprocessing
 import json
 import gc
 
-
-# Auto-threading configuration — MAXIMUM SPEED
-class ThreadConfig:
-    """Max concurrency: push threads to the absolute limit for real speed."""
-    
-    def __init__(self):
-        self._cpu_count = multiprocessing.cpu_count()
-        self._override_identifiers = None
-        self._override_platforms = None
-    
-    @property
-    def active_proxy_count(self) -> int:
-        if proxy_manager and proxy_manager.proxies:
-            return len([p for p in proxy_manager.proxies if p["status"] == "active"])
-        return 0
-    
-    @property
-    def max_concurrent_identifiers(self) -> int:
-        if self._override_identifiers:
-            return self._override_identifiers
-        base = max(self._cpu_count * 8, 50)
-        if self.active_proxy_count > 0:
-            base = min(base + self.active_proxy_count * 10, 500)
-        return base
-    
-    def dynamic_concurrent_identifiers(self, total: int) -> int:
-        """Scale concurrency to match workload — no holding back"""
-        if self._override_identifiers:
-            return self._override_identifiers
-        proxies = self.active_proxy_count
-        if total <= 10:
-            return total
-        elif total <= 50:
-            return 50 if proxies > 0 else 40
-        elif total <= 100:
-            return 100 if proxies > 0 else 80
-        elif total <= 500:
-            return 200 if proxies > 0 else 150
-        elif total <= 2000:
-            return 300 if proxies > 0 else 200
-        else:
-            return 500 if proxies > 0 else 300
-    
-    @property
-    def max_concurrent_platforms(self) -> int:
-        if self._override_platforms:
-            return self._override_platforms
-        if self.active_proxy_count == 0:
-            return 60
-        return min(60 + self.active_proxy_count * 15, 200)
-    
-    def recommended_batch_size(self, total_identifiers: int) -> int:
-        """Batch size = send as many as possible per request"""
-        proxies = self.active_proxy_count
-        
-        if total_identifiers <= 20:
-            return total_identifiers
-        elif total_identifiers <= 50:
-            return total_identifiers
-        elif total_identifiers <= 100:
-            return 50 if proxies > 0 else 40
-        elif total_identifiers <= 300:
-            return 100 if proxies > 0 else 80
-        elif total_identifiers <= 1000:
-            return 150 if proxies > 0 else 100
-        else:
-            return 200 if proxies > 0 else 150
-    
-    def set_max_identifiers(self, count: int):
-        self._override_identifiers = max(1, min(500, count))
-    
-    def set_max_platforms(self, count: int):
-        self._override_platforms = max(5, min(200, count))
-    
-    def reset(self):
-        self._override_identifiers = None
-        self._override_platforms = None
-    
-    def get_info(self, total: int = 50) -> dict:
-        return {
-            "max_concurrent_identifiers": self.dynamic_concurrent_identifiers(total),
-            "max_concurrent_platforms": self.max_concurrent_platforms,
-            "cpu_count": self._cpu_count,
-            "active_proxies": self.active_proxy_count,
-            "recommended_batch_size": self.recommended_batch_size(total),
-            "mode": "auto" if not self._override_identifiers else "manual",
-        }
-
-
-thread_config = ThreadConfig()
+# Playwright for Uber Eats checking
+from playwright.async_api import async_playwright, Browser, BrowserContext
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -117,21 +27,48 @@ load_dotenv(ROOT_DIR / '.env')
 # MongoDB connection
 mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+db = client[os.environ.get('DB_NAME', 'uber_checker')]
 
 # Create the main app
-app = FastAPI(title="FAST - Identity Checker API")
+app = FastAPI(title="Uber Eats Checker API")
 
 # Create a router with the /api prefix
 api_router = APIRouter(prefix="/api")
 
-# Import holehe modules for email (only kept services)
-from holehe.modules.shopping.amazon import amazon
-from holehe.modules.social_media.twitter import twitter
-from holehe.modules.music.spotify import spotify
 
-# Import ignorant modules for phone
-from ignorant.modules.shopping.amazon import amazon as ignorant_amazon
+# ============ STEALTH CONFIG ============
+
+STEALTH_SCRIPT = """
+    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+    Object.defineProperty(navigator, 'languages', {get: () => ['en-US', 'en']});
+    window.chrome = {runtime: {}, loadTimes: function(){}, csi: function(){}};
+    const originalQuery = window.navigator.permissions.query;
+    window.navigator.permissions.query = (parameters) => (
+        parameters.name === 'notifications' ?
+            Promise.resolve({ state: Notification.permission }) :
+            originalQuery(parameters)
+    );
+    delete navigator.__proto__.webdriver;
+"""
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+]
+
+VIEWPORTS = [
+    {"width": 1920, "height": 1080},
+    {"width": 1366, "height": 768},
+    {"width": 1536, "height": 864},
+    {"width": 1440, "height": 900},
+    {"width": 1280, "height": 720},
+]
+
+TIMEZONES = ["America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Europe/Paris"]
 
 
 # ============ PROXY MANAGER ============
@@ -142,22 +79,12 @@ class ProxyManager:
     def __init__(self):
         self.proxies: List[Dict[str, Any]] = []
         self.current_index = 0
-        self.failed_proxies: Dict[str, int] = {}  # Track failures
-        self.max_failures = 3
+        self.max_failures = 5
     
     def add_proxy(self, proxy_url: str, proxy_type: str = "auto") -> Dict[str, Any]:
         """Add a proxy to the pool"""
-        # Parse proxy URL
-        # Formats supported:
-        # - ip:port
-        # - ip:port:user:pass
-        # - user:pass@ip:port
-        # - protocol://ip:port
-        # - protocol://user:pass@ip:port
-        
         proxy_data = self._parse_proxy(proxy_url, proxy_type)
         if proxy_data:
-            # Check if already exists
             for p in self.proxies:
                 if p["host"] == proxy_data["host"] and p["port"] == proxy_data["port"]:
                     return {"success": False, "error": "Proxy already exists"}
@@ -166,6 +93,7 @@ class ProxyManager:
             proxy_data["added_at"] = datetime.now(timezone.utc).isoformat()
             proxy_data["requests"] = 0
             proxy_data["failures"] = 0
+            proxy_data["successes"] = 0
             proxy_data["status"] = "active"
             self.proxies.append(proxy_data)
             return {"success": True, "proxy": proxy_data}
@@ -175,13 +103,12 @@ class ProxyManager:
         """Parse proxy URL into components"""
         proxy_url = proxy_url.strip()
         
-        # Detect protocol from URL
         protocol = None
         if proxy_url.startswith("http://"):
             protocol = "http"
             proxy_url = proxy_url[7:]
         elif proxy_url.startswith("https://"):
-            protocol = "http"  # httpx uses http for https proxies
+            protocol = "http"
             proxy_url = proxy_url[8:]
         elif proxy_url.startswith("socks4://"):
             protocol = "socks4"
@@ -190,19 +117,16 @@ class ProxyManager:
             protocol = "socks5"
             proxy_url = proxy_url[9:]
         
-        # Use provided type or detected protocol
         if proxy_type != "auto" and proxy_type in ["http", "https", "socks4", "socks5"]:
             protocol = proxy_type if proxy_type != "https" else "http"
         elif protocol is None:
-            protocol = "http"  # Default
+            protocol = "http"
         
-        # Parse auth and host:port
         username = None
         password = None
         host = None
         port = None
         
-        # Format: user:pass@host:port
         if "@" in proxy_url:
             auth_part, host_part = proxy_url.rsplit("@", 1)
             if ":" in auth_part:
@@ -210,14 +134,11 @@ class ProxyManager:
         else:
             host_part = proxy_url
         
-        # Parse host:port or host:port:user:pass
         parts = host_part.split(":")
         if len(parts) == 2:
             host, port = parts
         elif len(parts) == 4:
             host, port, username, password = parts
-        elif len(parts) == 1:
-            return None  # Invalid
         else:
             return None
         
@@ -236,13 +157,11 @@ class ProxyManager:
         }
     
     def _build_proxy_url(self, protocol: str, host: str, port: int, username: str = None, password: str = None) -> str:
-        """Build proxy URL from components"""
         if username and password:
             return f"{protocol}://{username}:{password}@{host}:{port}"
         return f"{protocol}://{host}:{port}"
     
     def remove_proxy(self, proxy_id: str) -> bool:
-        """Remove a proxy from the pool"""
         for i, proxy in enumerate(self.proxies):
             if proxy["id"] == proxy_id:
                 self.proxies.pop(i)
@@ -250,14 +169,12 @@ class ProxyManager:
         return False
     
     def get_next_proxy(self) -> Optional[Dict[str, Any]]:
-        """Get next proxy in rotation"""
+        """Get next proxy in rotation (round-robin)"""
         if not self.proxies:
             return None
         
-        # Filter active proxies
         active_proxies = [p for p in self.proxies if p["status"] == "active"]
         if not active_proxies:
-            # Reset all proxies if all are inactive
             for p in self.proxies:
                 p["status"] = "active"
                 p["failures"] = 0
@@ -266,14 +183,21 @@ class ProxyManager:
         if not active_proxies:
             return None
         
-        # Rotate through proxies
         self.current_index = (self.current_index + 1) % len(active_proxies)
         proxy = active_proxies[self.current_index]
         proxy["requests"] += 1
         return proxy
     
+    def get_random_proxy(self) -> Optional[Dict[str, Any]]:
+        """Get a random active proxy"""
+        active_proxies = [p for p in self.proxies if p["status"] == "active"]
+        if not active_proxies:
+            return None
+        proxy = random.choice(active_proxies)
+        proxy["requests"] += 1
+        return proxy
+    
     def mark_failure(self, proxy_id: str):
-        """Mark a proxy as failed"""
         for proxy in self.proxies:
             if proxy["id"] == proxy_id:
                 proxy["failures"] += 1
@@ -282,83 +206,350 @@ class ProxyManager:
                 break
     
     def mark_success(self, proxy_id: str):
-        """Mark a proxy request as successful"""
         for proxy in self.proxies:
             if proxy["id"] == proxy_id:
+                proxy["successes"] += 1
                 proxy["failures"] = max(0, proxy["failures"] - 1)
                 proxy["status"] = "active"
                 break
     
     def get_all_proxies(self) -> List[Dict[str, Any]]:
-        """Get all proxies with stats"""
         return [{
             "id": p["id"],
             "host": p["host"],
             "port": p["port"],
             "protocol": p["protocol"],
-            "has_auth": bool(p["username"]),
+            "has_auth": bool(p.get("username")),
             "status": p["status"],
             "requests": p["requests"],
+            "successes": p.get("successes", 0),
             "failures": p["failures"],
             "added_at": p["added_at"]
         } for p in self.proxies]
     
     def clear_all(self):
-        """Clear all proxies"""
         self.proxies = []
         self.current_index = 0
-        self.failed_proxies = {}
     
-    def get_httpx_proxy(self) -> Optional[str]:
-        """Get proxy URL for httpx"""
+    def get_playwright_proxy(self) -> Optional[Dict[str, str]]:
+        """Get proxy formatted for Playwright"""
         proxy = self.get_next_proxy()
         if proxy:
-            return proxy["url"]
-        return None
-    
-    def create_client(self, timeout: int = 30) -> httpx.AsyncClient:
-        """Create httpx client with proxy if available"""
-        proxy_url = self.get_httpx_proxy()
-        if proxy_url:
-            return httpx.AsyncClient(
-                timeout=timeout,
-                follow_redirects=True,
-                proxy=proxy_url
-            )
-        return httpx.AsyncClient(timeout=timeout, follow_redirects=True)
+            pw_proxy = {"server": f"{proxy['protocol']}://{proxy['host']}:{proxy['port']}"}
+            if proxy.get("username") and proxy.get("password"):
+                pw_proxy["username"] = proxy["username"]
+                pw_proxy["password"] = proxy["password"]
+            return pw_proxy, proxy["id"]
+        return None, None
 
 
 # Global proxy manager
 proxy_manager = ProxyManager()
 
-# ============ BACKGROUND JOB SYSTEM ============
+
+# ============ BROWSER MANAGER ============
+
+class BrowserManager:
+    """Manages a persistent Playwright browser instance for Uber checks"""
+    
+    def __init__(self):
+        self.playwright = None
+        self.browser: Optional[Browser] = None
+        self._lock = asyncio.Lock()
+        self._initialized = False
+    
+    async def initialize(self):
+        """Initialize the browser (called once at startup)"""
+        if self._initialized:
+            return
+        async with self._lock:
+            if self._initialized:
+                return
+            try:
+                self.playwright = await async_playwright().start()
+                self.browser = await self.playwright.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-setuid-sandbox',
+                        '--disable-dev-shm-usage',
+                        '--disable-blink-features=AutomationControlled',
+                    ]
+                )
+                self._initialized = True
+                logging.info("Browser initialized successfully")
+            except Exception as e:
+                logging.error(f"Failed to initialize browser: {e}")
+                raise
+    
+    async def create_context(self, proxy: Optional[Dict] = None) -> BrowserContext:
+        """Create a new browser context with stealth and optional proxy"""
+        if not self._initialized:
+            await self.initialize()
+        
+        context_options = {
+            "user_agent": random.choice(USER_AGENTS),
+            "viewport": random.choice(VIEWPORTS),
+            "locale": "en-US",
+            "timezone_id": random.choice(TIMEZONES),
+            "color_scheme": "light",
+        }
+        
+        if proxy:
+            context_options["proxy"] = proxy
+        
+        context = await self.browser.new_context(**context_options)
+        await context.add_init_script(STEALTH_SCRIPT)
+        return context
+    
+    async def shutdown(self):
+        """Close the browser"""
+        if self.browser:
+            await self.browser.close()
+        if self.playwright:
+            await self.playwright.stop()
+        self._initialized = False
+
+
+# Global browser manager
+browser_manager = BrowserManager()
+
+
+# ============ UBER EATS CHECKER ============
+
+async def check_uber_eats_email(email: str, max_retries: int = 2) -> Dict[str, Any]:
+    """
+    Check if an email has an Uber Eats account.
+    
+    Detection logic:
+    - FOUND (account exists): "Welcome back" OR code sent to PHONE or Google/Apple sign-in
+    - NOT FOUND: Code sent to EMAIL + "Tip!" message
+    - CAPTCHA: Arkose puzzle triggered (retry with different proxy)
+    """
+    
+    last_error = None
+    
+    for attempt in range(max_retries + 1):
+        proxy_data, proxy_id = proxy_manager.get_playwright_proxy()
+        
+        try:
+            result = await _do_uber_check(email, proxy_data)
+            
+            if result["status"] == "captcha" and attempt < max_retries:
+                # Retry with different proxy
+                if proxy_id:
+                    proxy_manager.mark_failure(proxy_id)
+                logging.info(f"Captcha for {email}, retrying (attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(random.uniform(1, 3))
+                continue
+            
+            if proxy_id and result["status"] != "captcha":
+                proxy_manager.mark_success(proxy_id)
+            
+            return result
+            
+        except Exception as e:
+            last_error = str(e)
+            if proxy_id:
+                proxy_manager.mark_failure(proxy_id)
+            logging.error(f"Uber check error for {email} (attempt {attempt+1}): {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(random.uniform(1, 2))
+                continue
+    
+    return {
+        "email": email,
+        "status": "error",
+        "exists": False,
+        "details": last_error or "Max retries exceeded",
+        "platform": "uber_eats"
+    }
+
+
+async def _do_uber_check(email: str, proxy: Optional[Dict] = None) -> Dict[str, Any]:
+    """Perform the actual Uber Eats check using Playwright"""
+    
+    context = await browser_manager.create_context(proxy)
+    page = await context.new_page()
+    
+    try:
+        # Navigate to Uber auth page
+        await page.goto(
+            "https://auth.uber.com/v2/?breeze_local_zone=dca17&next_url=https%3A%2F%2Fwww.ubereats.com%2F",
+            timeout=25000
+        )
+        
+        # Wait for email input
+        await page.wait_for_selector('#PHONE_NUMBER_or_EMAIL_ADDRESS', timeout=15000)
+        
+        # Human-like interaction
+        await asyncio.sleep(random.uniform(0.5, 1.0))
+        
+        # Type email character by character (triggers React state updates)
+        await page.click('#PHONE_NUMBER_or_EMAIL_ADDRESS')
+        await asyncio.sleep(0.3)
+        await page.type('#PHONE_NUMBER_or_EMAIL_ADDRESS', email, delay=random.randint(40, 80))
+        
+        await asyncio.sleep(random.uniform(0.8, 1.5))
+        
+        # Click the Continue button
+        try:
+            await page.click('button[type="submit"]', timeout=5000)
+        except Exception:
+            try:
+                await page.press('#PHONE_NUMBER_or_EMAIL_ADDRESS', 'Enter')
+            except Exception:
+                return {"email": email, "status": "error", "exists": False, "details": "Could not submit", "platform": "uber_eats"}
+        
+        # Wait for the page to change - look for new content
+        try:
+            await page.wait_for_function("""
+                () => {
+                    const text = document.body.innerText.toLowerCase();
+                    return !text.includes("what's your phone number") && (
+                        text.includes('welcome back') || 
+                        text.includes('enter the') ||
+                        text.includes('protecting') ||
+                        text.includes('puzzle') ||
+                        text.includes('sign in with') ||
+                        text.includes('code') ||
+                        text.includes('verify')
+                    );
+                }
+            """, timeout=20000)
+        except Exception:
+            # Page might not have changed - possible captcha or error
+            pass
+        
+        await asyncio.sleep(random.uniform(2, 3))
+        
+        # Get VISIBLE page text only (not hidden JSON/scripts)
+        try:
+            text = await page.evaluate("""
+                () => {
+                    const body = document.body;
+                    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+                        acceptNode: function(node) {
+                            const el = node.parentElement;
+                            if (!el) return NodeFilter.FILTER_REJECT;
+                            if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE' || el.tagName === 'NOSCRIPT') return NodeFilter.FILTER_REJECT;
+                            const txt = node.textContent.trim();
+                            if (!txt || txt.length < 2) return NodeFilter.FILTER_REJECT;
+                            if (txt.startsWith('{') && txt.includes('"')) return NodeFilter.FILTER_REJECT;
+                            if (txt.startsWith('[{') && txt.includes('"')) return NodeFilter.FILTER_REJECT;
+                            return NodeFilter.FILTER_ACCEPT;
+                        }
+                    });
+                    let result = '';
+                    while (walker.nextNode()) {
+                        result += walker.currentNode.textContent.trim() + ' ';
+                    }
+                    return result.substring(0, 2000).trim();
+                }
+            """)
+        except Exception:
+            raw_text = await page.text_content("body") or ""
+            # Keep only first 2000 chars and remove JSON blocks
+            text = re.sub(r'\{[^}]{50,}\}', '', raw_text[:3000])
+        
+        if not text or len(text.strip()) < 5:
+            return {"email": email, "status": "error", "exists": False, "details": "Empty page", "platform": "uber_eats"}
+        
+        lower_text = text.lower()
+        logging.info(f"[UberCheck] {email} - Visible text ({len(text)} chars): {text[:200]}")
+        
+        # === DETECTION LOGIC ===
+        
+        # 0. Page didn't advance (still on initial login)
+        if "what's your phone number" in lower_text or "what\u2019s your phone" in lower_text:
+            return {"email": email, "status": "captcha", "exists": False, "details": "Page didn't advance (captcha/bot detection)", "platform": "uber_eats"}
+        
+        # 1. CAPTCHA detected
+        if "protecting your account" in lower_text or "solve this puzzle" in lower_text:
+            return {"email": email, "status": "captcha", "exists": False, "details": "Arkose captcha triggered", "platform": "uber_eats"}
+        
+        # 2. FOUND: "Welcome back" with user name
+        if "welcome back" in lower_text:
+            # Extract name if possible
+            name_match = re.search(r'welcome back,?\s*([^.!]+)', text, re.I)
+            name = name_match.group(1).strip() if name_match else ""
+            return {"email": email, "status": "found", "exists": True, "details": f"Welcome back{', ' + name if name else ''}", "platform": "uber_eats"}
+        
+        # 3. FOUND: Code sent to phone number (not email)
+        # Pattern: "sent to +33..." or "sent to (***) ***-**XX" or "envoyé au +33..."
+        phone_patterns = [
+            r'sent to \+\d',           # sent to +33...
+            r'sent to \(\*',           # sent to (***) ***-
+            r'envoy[eé] au \+\d',      # French
+            r'sent to.*\*\*\*',        # masked phone
+            r'code.*(?:phone|t[eé]l[eé]phone|mobile)',  # mentions phone
+        ]
+        for pattern in phone_patterns:
+            if re.search(pattern, lower_text):
+                return {"email": email, "status": "found", "exists": True, "details": "Code sent to phone number", "platform": "uber_eats"}
+        
+        # 4. FOUND: Asked to sign in with Google/Apple (as primary auth method, not just options)
+        # If page shows ONLY Google/Apple sign-in (not the initial page with all options)
+        if ("sign in with google" in lower_text or "sign in with apple" in lower_text or 
+            "connecter avec google" in lower_text or "connecter avec apple" in lower_text or
+            "se connecter avec" in lower_text):
+            # Make sure it's not the initial login page (which always shows these options)
+            if "what's your phone" not in lower_text and "enter phone" not in lower_text:
+                return {"email": email, "status": "found", "exists": True, "details": "Google/Apple sign-in required", "platform": "uber_eats"}
+        
+        # 5. NOT FOUND: Generic code sent to EMAIL + "Tip" message
+        has_code_entry = "enter the" in lower_text and "digit code" in lower_text
+        has_tip = "tip" in lower_text and ("check your inbox" in lower_text or "spam" in lower_text or "dossier" in lower_text)
+        sent_to_email = email.lower() in lower_text
+        
+        if has_code_entry and has_tip and sent_to_email:
+            return {"email": email, "status": "not_found", "exists": False, "details": "Code sent to email + Tip (no account)", "platform": "uber_eats"}
+        
+        # 6. If code entry but NO Tip and sent to email - might still exist
+        if has_code_entry and sent_to_email and not has_tip:
+            return {"email": email, "status": "found", "exists": True, "details": "Code sent (no Tip = account exists)", "platform": "uber_eats"}
+        
+        # 7. Code entry with Tip but not to this email (sent to another email/phone)
+        if has_code_entry and not sent_to_email:
+            return {"email": email, "status": "found", "exists": True, "details": "Code sent to different contact", "platform": "uber_eats"}
+        
+        # 8. Unknown response - report as unverifiable
+        return {"email": email, "status": "unverifiable", "exists": False, "details": "Could not determine", "platform": "uber_eats"}
+    
+    except Exception as e:
+        return {"email": email, "status": "error", "exists": False, "details": str(e)[:100], "platform": "uber_eats"}
+    
+    finally:
+        await context.close()
+
+
+# ============ JOB MANAGER ============
 
 class JobManager:
-    """Manages background verification jobs for massive file processing"""
+    """Manages background verification jobs"""
     
     def __init__(self):
         self.jobs: Dict[str, Dict[str, Any]] = {}
-        self.results_dir = Path("/tmp/fast_jobs")
+        self.results_dir = Path("/tmp/uber_jobs")
         self.results_dir.mkdir(exist_ok=True)
     
-    def create_job(self, total_identifiers: int, filename: str = "") -> str:
+    def create_job(self, total: int, filename: str = "") -> str:
         job_id = str(uuid.uuid4())
         self.jobs[job_id] = {
             "id": job_id,
             "status": "pending",
-            "total": total_identifiers,
+            "total": total,
             "processed": 0,
             "found": 0,
             "not_found": 0,
-            "unverifiable": 0,
+            "captcha": 0,
             "errors": 0,
             "filename": filename,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "started_at": None,
             "completed_at": None,
             "results_file": str(self.results_dir / f"{job_id}.jsonl"),
-            "csv_file": str(self.results_dir / f"{job_id}.csv"),
-            "txt_file": str(self.results_dir / f"{job_id}_valid.txt"),
+            "found_file": str(self.results_dir / f"{job_id}_found.txt"),
         }
         return job_id
     
@@ -369,1340 +560,124 @@ class JobManager:
         if job_id in self.jobs:
             self.jobs[job_id].update(kwargs)
     
-    def increment_processed(self, job_id: str, found: int = 0, not_found: int = 0, unverifiable: int = 0, errors: int = 0):
-        if job_id in self.jobs:
-            self.jobs[job_id]["processed"] += 1
-            self.jobs[job_id]["found"] += found
-            self.jobs[job_id]["not_found"] += not_found
-            self.jobs[job_id]["unverifiable"] += unverifiable
-            self.jobs[job_id]["errors"] += errors
-    
-    def write_result(self, job_id: str, result: Dict[str, Any]):
-        """Write a single result to the job's results file (JSONL format)"""
-        job = self.jobs.get(job_id)
-        if job:
-            with open(job["results_file"], "a", encoding="utf-8") as f:
-                f.write(json.dumps(result, ensure_ascii=False) + "\n")
-    
-    def write_csv_result(self, job_id: str, identifier: str, id_type: str, platforms_found: List[str]):
-        """Write a result to CSV file"""
-        job = self.jobs.get(job_id)
-        if job and platforms_found:
-            with open(job["csv_file"], "a", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow([identifier, id_type, ", ".join(platforms_found)])
-    
-    def write_txt_result(self, job_id: str, identifier: str):
-        """Write valid identifier to TXT file"""
-        job = self.jobs.get(job_id)
-        if job:
-            with open(job["txt_file"], "a", encoding="utf-8") as f:
-                f.write(identifier + "\n")
-    
-    def init_csv(self, job_id: str):
-        """Initialize CSV file with headers"""
-        job = self.jobs.get(job_id)
-        if job:
-            with open(job["csv_file"], "w", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
-                writer.writerow(["Identifiant", "Type", "Plateformes"])
-    
-    def cleanup_job(self, job_id: str):
-        """Remove job files after download"""
-        job = self.jobs.get(job_id)
-        if job:
-            for key in ["results_file", "csv_file", "txt_file"]:
-                try:
-                    Path(job[key]).unlink(missing_ok=True)
-                except:
-                    pass
+    def add_result(self, job_id: str, result: Dict[str, Any]):
+        if job_id not in self.jobs:
+            return
+        
+        job = self.jobs[job_id]
+        job["processed"] += 1
+        
+        status = result.get("status", "error")
+        if status == "found":
+            job["found"] += 1
+        elif status == "not_found":
+            job["not_found"] += 1
+        elif status == "captcha":
+            job["captcha"] += 1
+        else:
+            job["errors"] += 1
+        
+        # Write to results file
+        with open(job["results_file"], "a", encoding="utf-8") as f:
+            f.write(json.dumps(result, ensure_ascii=False) + "\n")
+        
+        # Write found emails to separate file
+        if status == "found":
+            with open(job["found_file"], "a", encoding="utf-8") as f:
+                f.write(result["email"] + "\n")
 
-# Global job manager
+
 job_manager = JobManager()
-
-
-# User agents
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-]
-
-def get_headers():
-    return {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-    }
 
 
 # ============ MODELS ============
 
-class PlatformResult(BaseModel):
-    platform: str
-    status: str
-    domain: str = ""
-    method: str = "holehe"
-    
-class VerificationResult(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    identifier: str
-    identifier_type: str
-    platforms: List[PlatformResult]
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
 class VerificationRequest(BaseModel):
-    identifiers: List[str]
-    platforms: Optional[List[str]] = None  # Optional: filter to specific platforms only
-
-class BulkVerificationResponse(BaseModel):
-    total: int
-    results: List[VerificationResult]
+    emails: List[str]
 
 class ProxyAddRequest(BaseModel):
-    proxies: List[str]  # List of proxy URLs
-    proxy_type: str = "auto"  # auto, http, https, socks4, socks5
+    proxies: List[str]
+    proxy_type: str = "auto"
 
-class ProxyResponse(BaseModel):
-    success: bool
-    message: str
-    proxies: List[Dict[str, Any]] = []
+class CheckResult(BaseModel):
+    email: str
+    status: str
+    exists: bool
+    details: str
+    platform: str = "uber_eats"
 
 
-# ============ PHONE NUMBER UTILITIES ============
+# ============ UTILITY FUNCTIONS ============
 
-def parse_phone_number(phone: str) -> tuple:
-    """Parse phone number to extract country code and number"""
-    phone = re.sub(r'[^\d+]', '', phone)
+def parse_emails_from_content(content: str) -> List[str]:
+    """Extract emails from file content"""
+    emails = []
+    email_pattern = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
     
-    country_codes = {
-        '33': 'FR', '1': 'US', '44': 'GB', '49': 'DE', '39': 'IT',
-        '34': 'ES', '32': 'BE', '41': 'CH', '31': 'NL', '351': 'PT',
-    }
-    
-    if phone.startswith('+'):
-        phone = phone[1:]
-    elif phone.startswith('00'):
-        phone = phone[2:]
-    
-    for code, country in sorted(country_codes.items(), key=lambda x: -len(x[0])):
-        if phone.startswith(code):
-            national_number = phone[len(code):]
-            # Strip leading 0 from national number (e.g. +330698... → 698...)
-            if national_number.startswith('0'):
-                national_number = national_number[1:]
-            return code, national_number, country
-    
-    if phone.startswith('0'):
-        return '33', phone[1:], 'FR'
-    
-    return '33', phone, 'FR'
-
-
-# ============ CUSTOM PLATFORM CHECKS ============
-
-# Rotating browser fingerprints for Emergent IP rotation (stable versions only)
-BROWSER_FINGERPRINTS = [
-    "chrome120", "chrome123", "chrome124", "chrome131",
-    "chrome116", "chrome119",
-    "safari17_0", "safari18_0",
-    "firefox133", "firefox135",
-    "edge101",
-]
-
-# Some sites (Netflix, Disney+) only accept Chrome TLS fingerprints
-CHROME_ONLY_FINGERPRINTS = [
-    "chrome120", "chrome123", "chrome124", "chrome131",
-    "chrome116", "chrome119",
-]
-
-def _get_random_fingerprint() -> str:
-    """Get a random browser fingerprint for TLS rotation"""
-    return random.choice(BROWSER_FINGERPRINTS)
-
-def _get_proxy_for_curl_cffi() -> Optional[Dict[str, str]]:
-    """Get proxy dict formatted for curl_cffi"""
-    proxy = proxy_manager.get_next_proxy()
-    if proxy:
-        return {"proxy_url": proxy["url"], "proxy_id": proxy["id"]}
-    return None
-
-def _build_session_kwargs(timeout: int = 20, chrome_only: bool = False) -> dict:
-    """Build curl_cffi session kwargs with rotating fingerprint + optional proxy"""
-    has_proxy = len([p for p in proxy_manager.proxies if p["status"] == "active"]) > 0
-    proxy_info = _get_proxy_for_curl_cffi() if has_proxy else None
-    
-    fp_list = CHROME_ONLY_FINGERPRINTS if chrome_only else BROWSER_FINGERPRINTS
-    kwargs = {
-        "impersonate": random.choice(fp_list),
-        "timeout": timeout,
-    }
-    if proxy_info:
-        kwargs["proxy"] = proxy_info["proxy_url"]
-    
-    return kwargs, proxy_info
-
-
-async def check_netflix_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via forgot password API - Emergent rotating IPs + fingerprint rotation"""
-    import codecs
-    
-    try:
-        from curl_cffi.requests import AsyncSession
-        import re
+    for line in content.split('\n'):
+        line = line.strip()
+        if not line:
+            continue
         
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20, chrome_only=True)
+        # Handle combo formats: email:password, email|password, email;password
+        for sep in [':', '|', ';', '\t', ',']:
+            if sep in line:
+                parts = line.split(sep)
+                line = parts[0].strip()
+                break
         
-        async with AsyncSession(**session_kwargs) as session:
-            # Get LoginHelp page
-            resp = await session.get("https://www.netflix.com/LoginHelp", timeout=15)
-            
-            if resp.status_code == 403:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            if resp.status_code != 200:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": f"status_{resp.status_code}"}
-            
-            # Extract authURL
-            auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
-            auth_url = codecs.decode(auth_match.group(1), 'unicode_escape') if auth_match else ""
-            
-            # Submit forgot password
-            resp2 = await session.post(
-                "https://www.netflix.com/LoginHelp",
-                data={
-                    'email': email,
-                    'action': 'loginHelpAction',
-                    'authURL': auth_url,
-                    'flow': 'loginHelp',
-                },
-                headers={
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'Referer': 'https://www.netflix.com/LoginHelp',
-                    'Origin': 'https://www.netflix.com',
-                },
-                timeout=15,
-                allow_redirects=True
-            )
-            
-            final_url = str(resp2.url).lower()
-            text_lower = resp2.text.lower()
-            
-            # /NotFound = email doesn't exist
-            if '/notfound' in final_url:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            # /LoginHelpConfirm = email sent = EXISTS
-            if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            # Check text signals
-            if any(kw in text_lower for kw in ['email sent', 'we sent', 'check your email', 'envoyé un e-mail']):
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            if any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "introuvable"]):
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            # Still on LoginHelp = not found
-            if '/loginhelp' in final_url:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
-            
-            if proxy_info:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "api"}
+        # Extract email
+        match = email_pattern.search(line)
+        if match:
+            emails.append(match.group().lower())
     
-    except Exception as e:
-        logging.error(f"Netflix error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "api", "reason": str(e)[:50]}
-
-
-async def check_disney_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Disney+ via BAM Tech API - Emergent rotating IPs + fingerprint rotation"""
-    
-    try:
-        from curl_cffi.requests import AsyncSession
-        
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30, chrome_only=True)
-        
-        async with AsyncSession(**session_kwargs) as session:
-            # Disney+ uses BAM Tech API for authentication
-            # Step 1: Get a guest token
-            token_resp = await session.post(
-                "https://global.edge.bamgrid.com/token",
-                headers={
-                    "Authorization": "Bearer ZGlzbmV5JmFuZHJvaWQmMS4wLjA.bkeb0m230uUhv8qrAXuNu39tbE_mD5EEhM_NAcohjyA",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-                data={
-                    "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                    "subject_token_type": "urn:bamtech:params:oauth:token-type:device",
-                    "platform": "browser",
-                },
-                timeout=15
-            )
-            
-            if token_resp.status_code != 200:
-                # Try alternative: direct forgot password page
-                resp = await session.get("https://www.disneyplus.com/forgot-password", timeout=15)
-                
-                if resp.status_code == 403:
-                    if proxy_info:
-                        proxy_manager.mark_failure(proxy_info["proxy_id"])
-                    return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-                
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "token_failed"}
-            
-            try:
-                token_data = token_resp.json()
-                access_token = token_data.get("access_token", "")
-            except Exception:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "token_parse_error"}
-            
-            if not access_token:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "no_token"}
-            
-            # Step 2: Check email via identity endpoint
-            check_resp = await session.post(
-                "https://global.edge.bamgrid.com/idp/check",
-                json={"email": email},
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json",
-                    "Origin": "https://www.disneyplus.com",
-                    "Referer": "https://www.disneyplus.com/",
-                },
-                timeout=15
-            )
-            
-            if check_resp.status_code == 200:
-                try:
-                    check_data = check_resp.json()
-                    # If "operations" contains "Register" -> email NOT registered (new user)
-                    # If "operations" contains "Login" -> email IS registered
-                    operations = check_data.get("operations", [])
-                    if isinstance(operations, list):
-                        op_types = [op.get("type", "") if isinstance(op, dict) else str(op) for op in operations]
-                    else:
-                        op_types = [str(operations)]
-                    
-                    if any("Login" in t for t in op_types):
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-                    
-                    if any("Register" in t for t in op_types):
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-                    
-                    # Fallback: check for isRegistered field
-                    if check_data.get("isRegistered") == True:
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-                    elif check_data.get("isRegistered") == False:
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-                        
-                except Exception:
-                    pass
-            
-            if check_resp.status_code == 429:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-            
-            if check_resp.status_code == 403:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "blocked"}
-            
-            if proxy_info:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "api"}
-    
-    except asyncio.TimeoutError:
-        logging.error(f"Disney+ check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": "timeout"}
-    except Exception as e:
-        logging.error(f"Disney+ check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "api", "reason": str(e)[:50]}
-
-
-async def check_binance_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via forgot password - Emergent rotating IPs + fingerprint rotation"""
-    
-    try:
-        from curl_cffi.requests import AsyncSession
-        
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
-        
-        async with AsyncSession(**session_kwargs) as session:
-            # Visit forgot password page first for cookies
-            resp = await session.get("https://accounts.binance.com/en/forgot-password", timeout=20)
-            
-            if resp.status_code == 403:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password", "reason": "ip_blocked"}
-            
-            if resp.status_code != 200:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
-            
-            # Try forgot password endpoint
-            resp2 = await session.post(
-                "https://accounts.binance.com/bapi/accounts/v1/public/account/password/reset/send",
-                json={"email": email, "type": "email"},
-                headers={
-                    "Content-Type": "application/json",
-                    "clienttype": "web",
-                    "Origin": "https://accounts.binance.com",
-                    "Referer": "https://accounts.binance.com/en/forgot-password",
-                },
-                timeout=20
-            )
-            
-            if resp2.status_code == 200:
-                try:
-                    result = resp2.json()
-                    # If success=true, email was sent = account exists
-                    if result.get("success"):
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
-                    # Check error message
-                    msg = str(result.get("message", "")).lower()
-                    code = str(result.get("code", "")).lower()
-                    if "not exist" in msg or "not found" in msg or "not registered" in msg:
-                        if proxy_info:
-                            proxy_manager.mark_success(proxy_info["proxy_id"])
-                        return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
-                    if "captcha" in msg or "verify" in msg:
-                        if proxy_info:
-                            proxy_manager.mark_failure(proxy_info["proxy_id"])
-                        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "captcha"}
-                except Exception:
-                    pass
-            
-            if resp2.status_code == 429:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
-            
-            if resp2.status_code == 403:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "blocked"}
-            
-            if proxy_info:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "forgot_password"}
-    
-    except asyncio.TimeoutError:
-        logging.error(f"Binance check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": "timeout"}
-    except Exception as e:
-        logging.error(f"Binance check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "forgot_password", "reason": str(e)[:50]}
-
-
-async def check_coinbase_custom(email: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via forgot password - Emergent rotating IPs + fingerprint rotation"""
-    
-    try:
-        from curl_cffi.requests import AsyncSession
-        import re
-        
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
-        
-        async with AsyncSession(**session_kwargs) as session:
-            # Visit login.coinbase.com forgot password page
-            resp = await session.get("https://login.coinbase.com/forgot-password", timeout=20)
-            
-            if resp.status_code == 403:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password", "reason": "ip_blocked"}
-            
-            if resp.status_code != 200:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": f"status_{resp.status_code}"}
-            
-            # Extract CSRF token if present
-            csrf = ""
-            csrf_match = re.search(r'name="csrf[_-]?token"[^>]*value="([^"]+)"', resp.text, re.I)
-            if csrf_match:
-                csrf = csrf_match.group(1)
-            
-            # Submit forgot password form
-            resp2 = await session.post(
-                "https://login.coinbase.com/forgot-password",
-                data={
-                    "email": email,
-                    "csrf_token": csrf,
-                },
-                headers={
-                    "Content-Type": "application/x-www-form-urlencoded",
-                    "Origin": "https://login.coinbase.com",
-                    "Referer": "https://login.coinbase.com/forgot-password",
-                },
-                timeout=20,
-                allow_redirects=True
-            )
-            
-            text_lower = resp2.text.lower() if resp2.text else ""
-            final_url = str(resp2.url).lower()
-            
-            if resp2.status_code == 429:
-                if proxy_info:
-                    proxy_manager.mark_failure(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-            
-            # Check for "email sent" signals = account EXISTS
-            if any(kw in text_lower for kw in ['email sent', 'check your email', 'sent you', 'reset link', 'we sent']):
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-            
-            # Check for success page redirect
-            if 'email-sent' in final_url or 'success' in final_url or 'check-email' in final_url:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-            
-            # Check for "account not found" signals
-            if any(kw in text_lower for kw in ['not found', "can't find", 'no account', 'does not exist', 'invalid email']):
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-            
-            # If we got 200 and still on forgot-password, Coinbase sends reset email regardless (privacy)
-            if resp2.status_code == 200:
-                if proxy_info:
-                    proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-            
-            if proxy_info:
-                proxy_manager.mark_success(proxy_info["proxy_id"])
-            return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "forgot_password"}
-    
-    except asyncio.TimeoutError:
-        logging.error(f"Coinbase check timeout for {email}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": "timeout"}
-    except Exception as e:
-        logging.error(f"Coinbase check error: {e}")
-        if proxy_info:
-            proxy_manager.mark_failure(proxy_info["proxy_id"])
-        return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "forgot_password", "reason": str(e)[:50]}
-
-
-
-# ============ PHONE NUMBER CHECKS (curl_cffi + Emergent rotating IPs + fingerprint rotation) ============
-
-MAX_PHONE_RETRIES = 2  # Retry with fresh session + new fingerprint on failure
-
-async def _phone_check_with_retry(check_fn, *args, max_retries=MAX_PHONE_RETRIES):
-    """Wrapper: retry phone check with new session + new fingerprint each time"""
-    last_result = None
-    for attempt in range(max_retries + 1):
-        result = await check_fn(*args)
-        if result.get("rate_limited") or result.get("unverifiable"):
-            last_result = result
-            if attempt < max_retries:
-                await asyncio.sleep(0.5 * (attempt + 1))  # Small backoff
-                continue
-        return result
-    return last_result or result
-
-
-def _phone_formats(country_code: str, national_number: str) -> list:
-    """Generate multiple phone formats to try for maximum detection"""
-    return [
-        f"+{country_code}{national_number}",      # +33698366832 (international)
-        f"0{national_number}",                      # 0698366832 (national with 0)
-        f"{country_code}{national_number}",         # 33698366832 (no +)
-        f"00{country_code}{national_number}",       # 0033698366832 (intl with 00)
-    ]
-
-
-async def check_amazon_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Amazon via signin page with curl_cffi + Emergent rotating IPs - regional Amazon"""
-    
-    # Map country codes to Amazon domains + assoc handles
-    AMAZON_CONFIGS = {
-        '33': ('www.amazon.fr', 'frflex'),
-        '1':  ('www.amazon.com', 'usflex'),
-        '44': ('www.amazon.co.uk', 'gbflex'),
-        '49': ('www.amazon.de', 'deflex'),
-        '39': ('www.amazon.it', 'itflex'),
-        '34': ('www.amazon.es', 'esflex'),
-        '31': ('www.amazon.nl', 'nlflex'),
-        '32': ('www.amazon.com.be', 'beflex'),
-        '351': ('www.amazon.es', 'esflex'),
-        '41': ('www.amazon.de', 'deflex'),
-    }
-    
-    domain, handle = AMAZON_CONFIGS.get(str(country_code), ('www.amazon.com', 'usflex'))
-    
-    # Try multiple phone formats
-    phone_formats = [
-        f"+{country_code}{phone}",        # +33698366832
-        f"0{phone}",                        # 0698366832 (national format)
-        f"{country_code}{phone}",           # 33698366832
-    ]
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        from bs4 import BeautifulSoup
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=25)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                for fmt in phone_formats:
-                    try:
-                        # Step 1: Get signin page via redirect
-                        resp = await session.get(f"https://{domain}/gp/sign-in.html", timeout=15)
-                        
-                        if resp.status_code != 200:
-                            continue
-                        
-                        # Step 2: Parse form
-                        body = BeautifulSoup(resp.text, 'html.parser')
-                        data = {}
-                        for inp in body.select('form input'):
-                            if 'name' in inp.attrs and 'value' in inp.attrs:
-                                data[inp['name']] = inp['value']
-                        
-                        if not data:
-                            continue
-                        
-                        data['email'] = fmt
-                        
-                        # Step 3: Get form action
-                        form_tag = body.find('form')
-                        action = form_tag.get('action', f'https://{domain}/ap/signin') if form_tag else f'https://{domain}/ap/signin'
-                        if not action.startswith('http'):
-                            action = f'https://{domain}{action}'
-                        
-                        # Step 4: Submit
-                        resp2 = await session.post(
-                            action,
-                            data=data,
-                            headers={
-                                'Content-Type': 'application/x-www-form-urlencoded',
-                                'Referer': str(resp.url),
-                                'Origin': f'https://{domain}',
-                            },
-                            timeout=15,
-                            allow_redirects=True
-                        )
-                        
-                        body2 = BeautifulSoup(resp2.text, 'html.parser')
-                        
-                        # Password prompt = account exists
-                        if body2.find("input", {"id": "ap_password"}) or body2.find("div", {"id": "auth-password-missing-alert"}):
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": domain, "method": "phone_signin"}
-                        
-                        # Captcha = rate limited, try next format
-                        if body2.find("img", {"id": "auth-captcha-image"}):
-                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": domain, "method": "phone_signin"}
-                    
-                    except Exception:
-                        continue
-                
-                # No format found the account
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": domain, "method": "phone_signin"}
-        
-        except Exception as e:
-            logging.error(f"Amazon phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": domain, "method": "phone_signin", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_netflix_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Netflix via phone forgot password - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        import codecs
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20, chrome_only=True)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                for fmt in formats:
-                    try:
-                        resp = await session.get("https://www.netflix.com/LoginHelp", timeout=15)
-                        if resp.status_code != 200:
-                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": resp.status_code == 403, "unverifiable": resp.status_code != 403, "domain": "netflix.com", "method": "phone_forgot"}
-                        
-                        auth_match = re.search(r'"authURL"\s*:\s*"([^"]+)"', resp.text)
-                        auth_url = codecs.decode(auth_match.group(1), 'unicode_escape') if auth_match else ""
-                        
-                        resp2 = await session.post(
-                            "https://www.netflix.com/LoginHelp",
-                            data={'email': fmt, 'action': 'loginHelpAction', 'authURL': auth_url, 'flow': 'loginHelp'},
-                            headers={'Content-Type': 'application/x-www-form-urlencoded', 'Referer': 'https://www.netflix.com/LoginHelp', 'Origin': 'https://www.netflix.com'},
-                            timeout=15, allow_redirects=True
-                        )
-                        
-                        final_url = str(resp2.url).lower()
-                        text_lower = resp2.text.lower()
-                        
-                        if '/loginhelpconfirm' in final_url or 'sentpassword' in final_url:
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
-                        
-                        if any(kw in text_lower for kw in ['sms sent', 'text sent', 'check your phone', 'email sent', 'we sent']):
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
-                        
-                        if '/notfound' in final_url or any(kw in text_lower for kw in ["cannot find", "can't find", "ne trouvons pas", "introuvable"]):
-                            continue  # Try next format
-                    except Exception:
-                        continue
-                
-                # All formats = not found
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "netflix.com", "method": "phone_forgot"}
-        except Exception as e:
-            logging.error(f"Netflix phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "netflix.com", "method": "phone_forgot", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_binance_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Binance via forgot password API - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                for fmt in formats:
-                    try:
-                        resp = await session.post(
-                            "https://accounts.binance.com/bapi/accounts/v1/public/account/password/reset/send",
-                            json={"mobile": fmt, "type": "mobile"},
-                            headers={
-                                "Content-Type": "application/json",
-                                "clienttype": "web",
-                                "Origin": "https://accounts.binance.com",
-                                "Referer": "https://accounts.binance.com/en/forgot-password",
-                                "User-Agent": random.choice(USER_AGENTS),
-                                "fvideo-id": str(uuid.uuid4()),
-                                "bnc-uuid": str(uuid.uuid4()),
-                            },
-                            timeout=20
-                        )
-                        
-                        if resp.status_code == 200:
-                            try:
-                                result = resp.json()
-                                if result.get("success"):
-                                    if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
-                                msg = str(result.get("message", "")).lower()
-                                code = str(result.get("code", ""))
-                                if "not exist" in msg or "not found" in msg or "not registered" in msg or code == "000002":
-                                    continue  # Try next format
-                                if "captcha" in msg or "verify" in msg:
-                                    if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                                    return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "phone_forgot", "reason": "captcha"}
-                            except Exception:
-                                continue
-                        
-                        if resp.status_code == 429:
-                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
-                        
-                        if resp.status_code in (403, 418):
-                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "phone_forgot", "reason": f"blocked_{resp.status_code}"}
-                    except Exception:
-                        continue
-                
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "binance.com", "method": "phone_forgot"}
-        except Exception as e:
-            logging.error(f"Binance phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "binance.com", "method": "phone_forgot", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_coinbase_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Coinbase via forgot password - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                for fmt in formats:
-                    try:
-                        resp = await session.get("https://login.coinbase.com/forgot-password", timeout=20)
-                        if resp.status_code != 200:
-                            continue
-                        
-                        csrf = ""
-                        csrf_match = re.search(r'name="csrf[_-]?token"[^>]*value="([^"]+)"', resp.text, re.I)
-                        if csrf_match:
-                            csrf = csrf_match.group(1)
-                        
-                        resp2 = await session.post(
-                            "https://login.coinbase.com/forgot-password",
-                            data={"email": fmt, "csrf_token": csrf},
-                            headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": "https://login.coinbase.com", "Referer": "https://login.coinbase.com/forgot-password"},
-                            timeout=20, allow_redirects=True
-                        )
-                        
-                        text_lower = resp2.text.lower() if resp2.text else ""
-                        final_url = str(resp2.url).lower()
-                        
-                        if any(kw in text_lower for kw in ['sent', 'check your', 'reset link']):
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
-                        
-                        if 'email-sent' in final_url or 'success' in final_url:
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
-                    except Exception:
-                        continue
-                
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "coinbase.com", "method": "phone_forgot"}
-        except Exception as e:
-            logging.error(f"Coinbase phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "coinbase.com", "method": "phone_forgot", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_spotify_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Spotify via password reset - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                for fmt in formats:
-                    try:
-                        resp = await session.get("https://accounts.spotify.com/en/password-reset", timeout=15)
-                        if resp.status_code != 200:
-                            continue
-                        
-                        csrf = ""
-                        csrf_match = re.search(r'name="csrf_token"[^>]*value="([^"]+)"', resp.text, re.I)
-                        if not csrf_match:
-                            csrf_match = re.search(r'"csrfToken"\s*:\s*"([^"]+)"', resp.text)
-                        if csrf_match:
-                            csrf = csrf_match.group(1)
-                        
-                        resp2 = await session.post(
-                            "https://accounts.spotify.com/en/password-reset",
-                            data={"email_or_username": fmt, "csrf_token": csrf},
-                            headers={"Content-Type": "application/x-www-form-urlencoded", "Origin": "https://accounts.spotify.com", "Referer": "https://accounts.spotify.com/en/password-reset"},
-                            timeout=15, allow_redirects=True
-                        )
-                        
-                        text_lower = resp2.text.lower() if resp2.text else ""
-                        final_url = str(resp2.url).lower()
-                        
-                        if 'password-reset-complete' in final_url or 'check your' in text_lower:
-                            if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                            return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "spotify.com", "method": "phone_forgot"}
-                        
-                        if any(kw in text_lower for kw in ['not find', "doesn't match", 'no account', "n'existe pas"]):
-                            continue  # Try next format
-                    except Exception:
-                        continue
-                
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "spotify.com", "method": "phone_forgot"}
-        except Exception as e:
-            logging.error(f"Spotify phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "spotify.com", "method": "phone_forgot", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_twitter_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Twitter/X via password reset API - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=20)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                # Get guest token
-                guest_token = ""
-                try:
-                    guest_resp = await session.post(
-                        "https://api.twitter.com/1.1/guest/activate.json",
-                        headers={"Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"},
-                        timeout=10
-                    )
-                    if guest_resp.status_code == 200:
-                        guest_token = guest_resp.json().get("guest_token", "")
-                except Exception:
-                    pass
-                
-                for fmt in formats:
-                    try:
-                        headers = {
-                            "Authorization": "Bearer AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs%3D1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA",
-                            "Content-Type": "application/x-www-form-urlencoded",
-                            "User-Agent": random.choice(USER_AGENTS),
-                            "x-twitter-active-user": "yes",
-                        }
-                        if guest_token:
-                            headers["x-guest-token"] = guest_token
-                        
-                        resp = await session.post(
-                            "https://api.twitter.com/i/users/begin_password_reset.json",
-                            data={"phone_number": fmt},
-                            headers=headers,
-                            timeout=15
-                        )
-                        
-                        if resp.status_code == 200:
-                            try:
-                                data = resp.json()
-                                if data.get("status") == "ok":
-                                    if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
-                            except Exception:
-                                pass
-                        
-                        if resp.status_code == 429:
-                            if proxy_info: proxy_manager.mark_failure(proxy_info["proxy_id"])
-                            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
-                        
-                        if resp.status_code == 400:
-                            continue  # Try next format
-                    except Exception:
-                        continue
-                
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "twitter.com", "method": "phone_reset"}
-        except Exception as e:
-            logging.error(f"Twitter phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "twitter.com", "method": "phone_reset", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-async def check_disney_phone(phone: str, country_code: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    """Check Disney+ via BAM Tech API - multi-format + Emergent rotating IPs"""
-    formats = _phone_formats(country_code, phone)
-    
-    async def _do_check():
-        from curl_cffi.requests import AsyncSession
-        session_kwargs, proxy_info = _build_session_kwargs(timeout=30, chrome_only=True)
-        
-        try:
-            async with AsyncSession(**session_kwargs) as session:
-                # Step 1: Get guest token
-                token_resp = await session.post(
-                    "https://global.edge.bamgrid.com/token",
-                    headers={
-                        "Authorization": "Bearer ZGlzbmV5JmFuZHJvaWQmMS4wLjA.bkeb0m230uUhv8qrAXuNu39tbE_mD5EEhM_NAcohjyA",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                        "User-Agent": random.choice(USER_AGENTS),
-                    },
-                    data={
-                        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
-                        "subject_token_type": "urn:bamtech:params:oauth:token-type:device",
-                        "platform": "browser",
-                    },
-                    timeout=15
-                )
-                
-                if token_resp.status_code == 429:
-                    return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
-                if token_resp.status_code != 200:
-                    return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": f"token_{token_resp.status_code}"}
-                
-                try:
-                    access_token = token_resp.json().get("access_token", "")
-                except Exception:
-                    return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": "token_parse"}
-                
-                if not access_token:
-                    return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": "no_token"}
-                
-                # Step 2: Try each phone format
-                for fmt in formats:
-                    try:
-                        check_resp = await session.post(
-                            "https://global.edge.bamgrid.com/idp/check",
-                            json={"phoneNumber": fmt},
-                            headers={
-                                "Authorization": f"Bearer {access_token}",
-                                "Content-Type": "application/json",
-                                "Origin": "https://www.disneyplus.com",
-                                "Referer": "https://www.disneyplus.com/",
-                            },
-                            timeout=15
-                        )
-                        
-                        if check_resp.status_code == 200:
-                            try:
-                                check_data = check_resp.json()
-                                operations = check_data.get("operations", [])
-                                op_types = [op.get("type", "") if isinstance(op, dict) else str(op) for op in operations] if isinstance(operations, list) else [str(operations)]
-                                
-                                if any("Login" in t for t in op_types):
-                                    if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                                    return {"exists": True, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
-                                if any("Register" in t for t in op_types):
-                                    continue  # Try next format
-                            except Exception:
-                                continue
-                        
-                        if check_resp.status_code == 429:
-                            return {"exists": False, "rate_limited": True, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
-                    except Exception:
-                        continue
-                
-                if proxy_info: proxy_manager.mark_success(proxy_info["proxy_id"])
-                return {"exists": False, "rate_limited": False, "unverifiable": False, "domain": "disneyplus.com", "method": "phone_api"}
-        except Exception as e:
-            logging.error(f"Disney+ phone check error: {e}")
-            if proxy_info: proxy_manager.mark_failure(proxy_info.get("proxy_id", ""))
-            return {"exists": False, "rate_limited": False, "unverifiable": True, "domain": "disneyplus.com", "method": "phone_api", "reason": str(e)[:50]}
-    
-    return await _phone_check_with_retry(_do_check)
-
-
-# ============ PLATFORM CONFIGS ============
-
-HOLEHE_MODULES = {
-    "amazon": {"func": amazon, "category": "Shopping"},
-    "twitter": {"func": twitter, "category": "Social"},
-    "spotify": {"func": spotify, "category": "Streaming"},
-}
-
-CUSTOM_EMAIL_PLATFORMS = {
-    "netflix": {"func": check_netflix_custom, "category": "Streaming", "needs_proxy": False},
-    "binance": {"func": check_binance_custom, "category": "Crypto", "needs_proxy": False},
-    "coinbase": {"func": check_coinbase_custom, "category": "Crypto", "needs_proxy": False},
-    "disney_plus": {"func": check_disney_custom, "category": "Streaming", "needs_proxy": False},
-}
-
-PHONE_PLATFORMS = {
-    "amazon": {"func": check_amazon_phone, "category": "Shopping", "needs_country_code": True},
-    "netflix": {"func": check_netflix_phone, "category": "Streaming", "needs_country_code": True},
-    "binance": {"func": check_binance_phone, "category": "Crypto", "needs_country_code": True},
-    "coinbase": {"func": check_coinbase_phone, "category": "Crypto", "needs_country_code": True},
-    "spotify": {"func": check_spotify_phone, "category": "Streaming", "needs_country_code": True},
-    "twitter": {"func": check_twitter_phone, "category": "Social", "needs_country_code": True},
-    "disney_plus": {"func": check_disney_phone, "category": "Streaming", "needs_country_code": True},
-}
-
-ALL_EMAIL_PLATFORMS = list(HOLEHE_MODULES.keys()) + list(CUSTOM_EMAIL_PLATFORMS.keys())
-ALL_PHONE_PLATFORMS = list(PHONE_PLATFORMS.keys())
-
-
-# ============ VERIFICATION FUNCTIONS ============
-
-async def check_holehe_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    try:
-        module_info = HOLEHE_MODULES.get(platform_name)
-        if not module_info:
-            return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
-        
-        out = []
-        await module_info["func"](email, client, out)
-        
-        if out and len(out) > 0:
-            result = out[0]
-            return {
-                "platform": platform_name,
-                "exists": result.get("exists", False),
-                "rate_limited": result.get("rateLimit", False),
-                "domain": result.get("domain", ""),
-                "method": result.get("method", "holehe"),
-                "error": False
-            }
-        return {"platform": platform_name, "exists": False, "rate_limited": False, "domain": "", "error": True}
-    except Exception as e:
-        logging.error(f"Error checking {platform_name}: {e}")
-        return {"platform": platform_name, "exists": False, "rate_limited": True, "domain": "", "error": True}
-
-
-async def check_custom_email_platform(email: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    try:
-        platform_info = CUSTOM_EMAIL_PLATFORMS.get(platform_name)
-        if not platform_info:
-            return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
-        
-        result = await platform_info["func"](email, client)
-        result["platform"] = platform_name
-        result["error"] = False
-        
-        # Ensure unverifiable field exists
-        if "unverifiable" not in result:
-            result["unverifiable"] = False
-        
-        return result
-    except Exception as e:
-        logging.error(f"Error checking custom {platform_name}: {e}")
-        return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True, "reason": "exception"}
-
-
-async def check_phone_platform(phone: str, country_code: str, platform_name: str, client: httpx.AsyncClient) -> Dict[str, Any]:
-    try:
-        platform_info = PHONE_PLATFORMS.get(platform_name)
-        if not platform_info:
-            return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
-        
-        if platform_info.get("needs_country_code"):
-            result = await platform_info["func"](phone, country_code, client)
-        else:
-            full_phone = country_code + phone
-            result = await platform_info["func"](full_phone, client)
-        
-        result["platform"] = platform_name
-        result["error"] = False
-        if "unverifiable" not in result:
-            result["unverifiable"] = False
-        return result
-    except Exception as e:
-        logging.error(f"Error checking phone {platform_name}: {e}")
-        return {"platform": platform_name, "exists": False, "rate_limited": False, "unverifiable": True, "domain": "", "error": True}
-
-
-def _result_to_status(result: Dict[str, Any]) -> str:
-    """Convert a platform check result dict to a status string"""
-    if result.get("error"):
-        return "error"
-    elif result.get("unverifiable"):
-        return "unverifiable"
-    elif result.get("rate_limited"):
-        return "rate_limited"
-    elif result.get("exists"):
-        return "found"
-    else:
-        return "not_found"
-
-
-async def verify_email(email: str, platforms_filter: Optional[List[str]] = None) -> VerificationResult:
-    platforms_results = []
-    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
-    
-    async def check_with_semaphore(coro):
-        async with sem:
-            return await coro
-    
-    async with proxy_manager.create_client(timeout=30) as client:
-        # Build ALL tasks at once - custom + holehe
-        all_tasks = []
-        
-        # Custom platform tasks
-        for name in CUSTOM_EMAIL_PLATFORMS.keys():
-            if platforms_filter is None or name in platforms_filter:
-                all_tasks.append(check_with_semaphore(check_custom_email_platform(email, name, client)))
-        
-        # Holehe platform tasks
-        for name in HOLEHE_MODULES.keys():
-            if platforms_filter is None or name in platforms_filter:
-                all_tasks.append(check_with_semaphore(check_holehe_platform(email, name, client)))
-        
-        # Run ALL platforms in parallel
-        all_results = await asyncio.gather(*all_tasks, return_exceptions=True)
-        
-        for result in all_results:
-            if isinstance(result, Exception):
-                continue
-            
-            platforms_results.append(PlatformResult(
-                platform=result.get("platform", "unknown"),
-                status=_result_to_status(result),
-                domain=result.get("domain", ""),
-                method=result.get("method", "unknown")
-            ))
-    
-    status_order = {"found": 0, "not_found": 1, "unverifiable": 2, "rate_limited": 3, "error": 4}
-    platforms_results.sort(key=lambda x: status_order.get(x.status, 5))
-    
-    return VerificationResult(
-        identifier=email,
-        identifier_type="email",
-        platforms=platforms_results
-    )
-
-
-async def verify_phone(phone: str, platforms_filter: Optional[List[str]] = None) -> VerificationResult:
-    country_code, national_number, country = parse_phone_number(phone)
-    platforms_results = []
-    sem = asyncio.Semaphore(thread_config.max_concurrent_platforms)
-    
-    async def check_with_semaphore(coro):
-        async with sem:
-            return await coro
-    
-    async with proxy_manager.create_client(timeout=30) as client:
-        tasks = []
-        for name in PHONE_PLATFORMS.keys():
-            if platforms_filter is None or name in platforms_filter:
-                tasks.append(check_with_semaphore(check_phone_platform(national_number, country_code, name, client)))
-        
-        all_results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        for result in all_results:
-            if isinstance(result, Exception):
-                continue
-            
-            platforms_results.append(PlatformResult(
-                platform=result.get("platform", "unknown"),
-                status=_result_to_status(result),
-                domain=result.get("domain", ""),
-                method=result.get("method", "phone")
-            ))
-    
-    status_order = {"found": 0, "not_found": 1, "unverifiable": 2, "rate_limited": 3, "error": 4}
-    platforms_results.sort(key=lambda x: status_order.get(x.status, 5))
-    
-    return VerificationResult(
-        identifier=phone,
-        identifier_type="phone",
-        platforms=platforms_results
-    )
-
-
-async def verify_identifier(identifier: str, platforms_filter: Optional[List[str]] = None) -> Optional[VerificationResult]:
-    identifier = clean_identifier(identifier)
-    if not identifier:
-        return None
-    
-    identifier_type = detect_identifier_type(identifier)
-    
-    if identifier_type == "email":
-        return await verify_email(identifier, platforms_filter)
-    elif identifier_type == "phone":
-        return await verify_phone(identifier, platforms_filter)
-    else:
-        return None
-
-
-def clean_identifier(identifier: str) -> str:
-    """Extract clean email or phone from formats like email:password or email|password"""
-    identifier = identifier.strip()
-    
-    # Handle combo formats: email:password, email|password, email;password
-    for separator in [':', '|', ';']:
-        if separator in identifier:
-            parts = identifier.split(separator)
-            # Take the first part (should be email or phone)
-            identifier = parts[0].strip()
-            break
-    
-    return identifier
-
-
-def detect_identifier_type(identifier: str) -> str:
-    identifier = clean_identifier(identifier)
-    if "@" in identifier and "." in identifier:
-        return "email"
-    digits = sum(c.isdigit() for c in identifier)
-    if digits >= 8 and digits <= 15:
-        return "phone"
-    return "unknown"
-
-
-def parse_file_content(content: str) -> List[str]:
-    identifiers = []
-    
-    try:
-        reader = csv.reader(io.StringIO(content))
-        for row in reader:
-            for cell in row:
-                cell = cell.strip()
-                cleaned = clean_identifier(cell)
-                if cleaned and (detect_identifier_type(cell) in ["email", "phone"]):
-                    identifiers.append(cleaned)
-    except Exception:
-        pass
-    
-    if not identifiers:
-        for line in content.split('\n'):
-            for item in line.replace(',', '\n').replace(';', '\n').replace('\t', '\n').split('\n'):
-                item = item.strip()
-                cleaned = clean_identifier(item)
-                if cleaned and (detect_identifier_type(item) in ["email", "phone"]):
-                    identifiers.append(cleaned)
-    
+    # Deduplicate while preserving order
     seen = set()
     unique = []
-    for item in identifiers:
-        if item not in seen:
-            seen.add(item)
-            unique.append(item)
+    for e in emails:
+        if e not in seen:
+            seen.add(e)
+            unique.append(e)
     
     return unique
+
+
+# ============ BACKGROUND JOB PROCESSING ============
+
+async def process_job(job_id: str, emails: List[str]):
+    """Process a verification job in background"""
+    try:
+        job_manager.update_job(job_id, status="running", started_at=datetime.now(timezone.utc).isoformat())
+        
+        # Concurrency based on proxy count
+        active_proxies = len([p for p in proxy_manager.proxies if p["status"] == "active"])
+        max_concurrent = max(2, min(active_proxies * 2, 10)) if active_proxies > 0 else 2
+        
+        sem = asyncio.Semaphore(max_concurrent)
+        
+        async def check_with_sem(email):
+            async with sem:
+                result = await check_uber_eats_email(email)
+                job_manager.add_result(job_id, result)
+                return result
+        
+        # Process in batches
+        batch_size = max_concurrent * 3
+        for i in range(0, len(emails), batch_size):
+            batch = emails[i:i+batch_size]
+            tasks = [check_with_sem(email) for email in batch]
+            await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Small delay between batches
+            await asyncio.sleep(random.uniform(0.5, 1.5))
+            gc.collect()
+        
+        job_manager.update_job(job_id, status="completed", completed_at=datetime.now(timezone.utc).isoformat())
+        logging.info(f"Job {job_id} completed: {len(emails)} emails processed")
+        
+    except Exception as e:
+        logging.error(f"Job {job_id} failed: {e}")
+        job_manager.update_job(job_id, status="failed")
 
 
 # ============ ROUTES ============
@@ -1710,76 +685,47 @@ def parse_file_content(content: str) -> List[str]:
 @api_router.get("/")
 async def root():
     return {
-        "message": "FAST API - Identity Checker", 
-        "version": "6.0.0", 
-        "mode": "real_verification",
-        "email_platforms": len(ALL_EMAIL_PLATFORMS),
-        "phone_platforms": len(ALL_PHONE_PLATFORMS),
+        "service": "Uber Eats Checker",
+        "version": "1.0.0",
         "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
-        "auto_threading": thread_config.get_info()
+        "proxies_total": len(proxy_manager.proxies),
     }
 
 @api_router.get("/health")
 async def health_check():
-    # Filter platforms that actually need proxy
-    platforms_needing_proxy = [name for name, config in CUSTOM_EMAIL_PLATFORMS.items() if config.get("needs_proxy", False)]
-    
     return {
-        "status": "healthy", 
-        "email_platforms": ALL_EMAIL_PLATFORMS,
-        "phone_platforms": ALL_PHONE_PLATFORMS,
-        "total_platforms": len(ALL_EMAIL_PLATFORMS) + len(ALL_PHONE_PLATFORMS),
-        "proxies_count": len(proxy_manager.proxies),
+        "status": "healthy",
+        "service": "Uber Eats Checker",
+        "browser_ready": browser_manager._initialized,
         "proxies_active": len([p for p in proxy_manager.proxies if p["status"] == "active"]),
-        "mode": "real_verification",
-        "custom_platforms_need_proxy": platforms_needing_proxy,
-        "threading": thread_config.get_info()
+        "proxies_total": len(proxy_manager.proxies),
     }
-
-@api_router.get("/config/threads")
-async def get_thread_config(total: Optional[int] = None):
-    """Get auto-threading configuration with recommended batch size — scales with total"""
-    t = total if total is not None and total > 0 else 50
-    info = thread_config.get_info(t)
-    return info
-
-@api_router.post("/config/threads")
-async def set_thread_config(max_identifiers: Optional[int] = None, max_platforms: Optional[int] = None, reset: Optional[bool] = None):
-    """Manually override auto-threading settings"""
-    if reset:
-        thread_config.reset()
-        return thread_config.get_info()
-    if max_identifiers is not None:
-        thread_config.set_max_identifiers(max_identifiers)
-    if max_platforms is not None:
-        thread_config.set_max_platforms(max_platforms)
-    return thread_config.get_info()
 
 
 # ============ PROXY ROUTES ============
 
-@api_router.post("/proxies/add", response_model=ProxyResponse)
+@api_router.post("/proxies/add")
 async def add_proxies(request: ProxyAddRequest):
-    """Add proxies to the pool"""
     added = []
     failed = []
     
     for proxy_url in request.proxies:
         result = proxy_manager.add_proxy(proxy_url, request.proxy_type)
         if result["success"]:
-            added.append(result["proxy"])
+            added.append(result["proxy"]["id"])
         else:
             failed.append({"url": proxy_url, "error": result["error"]})
     
-    return ProxyResponse(
-        success=len(added) > 0,
-        message=f"Added {len(added)} proxies, {len(failed)} failed",
-        proxies=proxy_manager.get_all_proxies()
-    )
+    return {
+        "success": len(added) > 0,
+        "message": f"{len(added)} proxies ajoutés, {len(failed)} échoués",
+        "added": len(added),
+        "failed": len(failed),
+        "proxies": proxy_manager.get_all_proxies()
+    }
 
 @api_router.get("/proxies")
 async def get_proxies():
-    """Get all proxies with stats"""
     return {
         "proxies": proxy_manager.get_all_proxies(),
         "total": len(proxy_manager.proxies),
@@ -1788,20 +734,19 @@ async def get_proxies():
 
 @api_router.delete("/proxies/{proxy_id}")
 async def delete_proxy(proxy_id: str):
-    """Delete a proxy"""
     if proxy_manager.remove_proxy(proxy_id):
-        return {"success": True, "message": "Proxy removed"}
-    raise HTTPException(status_code=404, detail="Proxy not found")
+        return {"success": True, "message": "Proxy supprimé"}
+    raise HTTPException(status_code=404, detail="Proxy non trouvé")
 
 @api_router.delete("/proxies")
 async def clear_proxies():
-    """Clear all proxies"""
     proxy_manager.clear_all()
-    return {"success": True, "message": "All proxies cleared"}
+    return {"success": True, "message": "Tous les proxies supprimés"}
 
 @api_router.post("/proxies/test")
 async def test_proxies():
-    """Test all proxies"""
+    """Test all proxies connectivity"""
+    import httpx
     results = []
     for proxy in proxy_manager.proxies:
         try:
@@ -1815,118 +760,78 @@ async def test_proxies():
                     results.append({"id": proxy["id"], "status": "failed", "error": f"Status {response.status_code}"})
                     proxy_manager.mark_failure(proxy["id"])
         except Exception as e:
-            results.append({"id": proxy["id"], "status": "failed", "error": str(e)})
+            results.append({"id": proxy["id"], "status": "failed", "error": str(e)[:80]})
             proxy_manager.mark_failure(proxy["id"])
     
     return {"results": results}
 
 
-# ============ BACKGROUND JOB ROUTES ============
+# ============ CHECK ROUTES ============
 
-async def process_job_batch(job_id: str, identifiers: List[str], batch_start: int, platforms_filter: Optional[List[str]] = None):
-    """Process a batch of identifiers for a job"""
+@api_router.post("/check")
+async def check_emails(request: VerificationRequest):
+    """Check a list of emails against Uber Eats"""
+    if not request.emails:
+        raise HTTPException(status_code=400, detail="Aucun email fourni")
     
-    async def verify_single(identifier: str):
-        try:
-            result = await verify_identifier(identifier, platforms_filter)
-            if result:
-                # Count stats
-                found_count = sum(1 for p in result.platforms if p.status == "found")
-                not_found_count = sum(1 for p in result.platforms if p.status == "not_found")
-                unverifiable_count = sum(1 for p in result.platforms if p.status == "unverifiable")
-                error_count = sum(1 for p in result.platforms if p.status in ["error", "rate_limited"])
-                
-                # Update job stats
-                job_manager.increment_processed(
-                    job_id, 
-                    found=found_count, 
-                    not_found=not_found_count, 
-                    unverifiable=unverifiable_count, 
-                    errors=error_count
-                )
-                
-                # Write result to file
-                result_dict = {
-                    "identifier": result.identifier,
-                    "identifier_type": result.identifier_type,
-                    "platforms": [{"platform": p.platform, "status": p.status, "domain": p.domain, "method": p.method} for p in result.platforms]
-                }
-                job_manager.write_result(job_id, result_dict)
-                
-                # Write to CSV if any platform found
-                platforms_found = [p.platform for p in result.platforms if p.status == "found"]
-                if platforms_found:
-                    job_manager.write_csv_result(job_id, result.identifier, result.identifier_type, platforms_found)
-                
-                # Write ALL valid identifiers to TXT (all emails/phones that were successfully parsed)
-                job_manager.write_txt_result(job_id, result.identifier)
-                
-                return result
-        except Exception as e:
-            logging.error(f"Job {job_id} error verifying {identifier}: {e}")
-            job_manager.increment_processed(job_id, errors=1)
-        return None
+    if len(request.emails) > 50:
+        raise HTTPException(status_code=400, detail="Maximum 50 emails par requête. Utilisez /jobs/create pour les gros volumes.")
     
-    # Process batch with concurrency control
-    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
-    batch_sem = asyncio.Semaphore(concurrency)
+    # Process emails concurrently
+    active_proxies = len([p for p in proxy_manager.proxies if p["status"] == "active"])
+    max_concurrent = max(1, min(active_proxies, 5)) if active_proxies > 0 else 1
+    sem = asyncio.Semaphore(max_concurrent)
     
-    async def verify_with_sem(ident):
-        async with batch_sem:
-            return await verify_single(ident)
+    async def check_with_sem(email):
+        async with sem:
+            return await check_uber_eats_email(email.strip().lower())
     
-    tasks = [verify_with_sem(ident) for ident in identifiers]
-    await asyncio.gather(*tasks, return_exceptions=True)
+    tasks = [check_with_sem(e) for e in request.emails if e.strip()]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    # Force garbage collection after each batch
-    gc.collect()
-
-
-async def run_verification_job(job_id: str, identifiers: List[str], platforms_filter: Optional[List[str]] = None):
-    """Run a complete verification job in background"""
-    try:
-        job_manager.update_job(job_id, status="running", started_at=datetime.now(timezone.utc).isoformat())
-        job_manager.init_csv(job_id)
-        
-        # Process in batches to avoid memory issues
-        # For massive files, use smaller batches to prevent memory buildup
-        total = len(identifiers)
-        if total > 100000:
-            batch_size = 500  # Smaller batches for 100k+
-        elif total > 10000:
-            batch_size = 1000  # Medium batches for 10k-100k
+    final_results = []
+    for r in results:
+        if isinstance(r, Exception):
+            final_results.append({"email": "unknown", "status": "error", "exists": False, "details": str(r)[:100], "platform": "uber_eats"})
         else:
-            batch_size = 2000  # Larger batches for smaller files
-        
-        for i in range(0, total, batch_size):
-            batch = identifiers[i:i+batch_size]
-            await process_job_batch(job_id, batch, i, platforms_filter)
-            
-            # Log progress every batch
-            job = job_manager.get_job(job_id)
-            if job:
-                progress = (job["processed"] / total) * 100
-                logging.info(f"Job {job_id}: {job['processed']}/{total} ({progress:.1f}%)")
-            
-            # Small delay between batches to prevent overwhelming
-            await asyncio.sleep(0.1)
-        
-        job_manager.update_job(job_id, status="completed", completed_at=datetime.now(timezone.utc).isoformat())
-        logging.info(f"Job {job_id} completed: {total} identifiers processed")
-        
-    except Exception as e:
-        logging.error(f"Job {job_id} failed: {e}")
-        job_manager.update_job(job_id, status="failed", error=str(e))
+            final_results.append(r)
+    
+    # Stats
+    found = sum(1 for r in final_results if r.get("status") == "found")
+    not_found = sum(1 for r in final_results if r.get("status") == "not_found")
+    captcha = sum(1 for r in final_results if r.get("status") == "captcha")
+    errors = sum(1 for r in final_results if r.get("status") in ["error", "unverifiable"])
+    
+    return {
+        "total": len(final_results),
+        "found": found,
+        "not_found": not_found,
+        "captcha": captcha,
+        "errors": errors,
+        "results": final_results
+    }
 
+
+@api_router.post("/check/single")
+async def check_single_email(email: str):
+    """Check a single email"""
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Email invalide")
+    
+    result = await check_uber_eats_email(email.strip().lower())
+    return result
+
+
+# ============ JOB ROUTES ============
 
 @api_router.post("/jobs/create")
-async def create_job(file: UploadFile = File(...), platforms: Optional[str] = None):
-    """Create a background verification job for large files"""
+async def create_job(file: UploadFile = File(...)):
+    """Create a background check job from file upload"""
     allowed_types = ['.csv', '.txt', '.text']
     file_ext = Path(file.filename).suffix.lower() if file.filename else ''
     
     if file_ext not in allowed_types and file.content_type not in ['text/csv', 'text/plain']:
-        raise HTTPException(status_code=400, detail="Type de fichier invalide. Formats acceptés : CSV, TXT")
+        raise HTTPException(status_code=400, detail="Format invalide. Acceptés : CSV, TXT")
     
     try:
         content = await file.read()
@@ -1935,35 +840,27 @@ async def create_job(file: UploadFile = File(...), platforms: Optional[str] = No
         try:
             content_str = content.decode('latin-1')
         except Exception:
-            raise HTTPException(status_code=400, detail="Impossible de décoder le contenu du fichier")
+            raise HTTPException(status_code=400, detail="Impossible de lire le fichier")
     
-    identifiers = parse_file_content(content_str)
+    emails = parse_emails_from_content(content_str)
     
-    if not identifiers:
-        raise HTTPException(status_code=400, detail="Aucun email ou numéro de téléphone valide trouvé")
+    if not emails:
+        raise HTTPException(status_code=400, detail="Aucun email valide trouvé dans le fichier")
     
-    # Parse platforms filter
-    platforms_filter = None
-    if platforms:
-        platforms_filter = [p.strip() for p in platforms.split(",") if p.strip()]
-    
-    # Create job
-    job_id = job_manager.create_job(len(identifiers), file.filename or "upload")
+    job_id = job_manager.create_job(len(emails), file.filename or "upload")
     
     # Start background task
-    asyncio.create_task(run_verification_job(job_id, identifiers, platforms_filter))
+    asyncio.create_task(process_job(job_id, emails))
     
     return {
         "job_id": job_id,
-        "total": len(identifiers),
+        "total": len(emails),
         "status": "pending",
-        "message": f"Job créé pour {len(identifiers)} identifiants. Le traitement commence..."
+        "message": f"Job créé pour {len(emails)} emails"
     }
-
 
 @api_router.get("/jobs/{job_id}")
 async def get_job_status(job_id: str):
-    """Get job status and progress"""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job non trouvé")
@@ -1978,91 +875,59 @@ async def get_job_status(job_id: str):
         "progress": round(progress, 1),
         "found": job["found"],
         "not_found": job["not_found"],
-        "unverifiable": job["unverifiable"],
+        "captcha": job["captcha"],
         "errors": job["errors"],
         "filename": job["filename"],
         "created_at": job["created_at"],
-        "started_at": job["started_at"],
         "completed_at": job["completed_at"],
     }
 
-
-@api_router.get("/jobs/{job_id}/results/csv")
-async def download_job_csv(job_id: str):
-    """Download job results as CSV (only valid/found identifiers)"""
+@api_router.get("/jobs/{job_id}/results")
+async def download_job_results(job_id: str):
+    """Download all results as JSONL"""
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job non trouvé")
     
-    csv_path = Path(job["csv_file"])
-    if not csv_path.exists():
-        raise HTTPException(status_code=404, detail="Fichier CSV non disponible")
+    results_path = Path(job["results_file"])
+    if not results_path.exists():
+        raise HTTPException(status_code=404, detail="Résultats non disponibles")
     
     def iter_file():
-        with open(csv_path, "rb") as f:
-            yield b'\xef\xbb\xbf'  # UTF-8 BOM for Excel
+        with open(results_path, "rb") as f:
             for chunk in iter(lambda: f.read(8192), b''):
                 yield chunk
     
-    filename = f"resultats_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.csv"
-    return StreamingResponse(
-        iter_file(),
-        media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-
-@api_router.get("/jobs/{job_id}/results/txt")
-async def download_job_txt(job_id: str):
-    """Download job results as TXT (only valid identifiers, one per line)"""
-    job = job_manager.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job non trouvé")
-    
-    txt_path = Path(job["txt_file"])
-    if not txt_path.exists():
-        raise HTTPException(status_code=404, detail="Fichier TXT non disponible")
-    
-    def iter_file():
-        with open(txt_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b''):
-                yield chunk
-    
-    filename = f"valides_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.txt"
-    return StreamingResponse(
-        iter_file(),
-        media_type="text/plain; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
-    )
-
-
-@api_router.get("/jobs/{job_id}/results/jsonl")
-async def download_job_jsonl(job_id: str):
-    """Download full job results as JSONL (all identifiers with all platform results)"""
-    job = job_manager.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job non trouvé")
-    
-    jsonl_path = Path(job["results_file"])
-    if not jsonl_path.exists():
-        raise HTTPException(status_code=404, detail="Fichier de résultats non disponible")
-    
-    def iter_file():
-        with open(jsonl_path, "rb") as f:
-            for chunk in iter(lambda: f.read(8192), b''):
-                yield chunk
-    
-    filename = f"resultats_complets_{job_id[:8]}_{datetime.now().strftime('%Y%m%d')}.jsonl"
     return StreamingResponse(
         iter_file(),
         media_type="application/jsonl",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename="results_{job_id[:8]}.jsonl"'}
     )
 
+@api_router.get("/jobs/{job_id}/found")
+async def download_found_emails(job_id: str):
+    """Download only found emails as TXT"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job non trouvé")
+    
+    found_path = Path(job["found_file"])
+    if not found_path.exists():
+        raise HTTPException(status_code=404, detail="Fichier non disponible")
+    
+    def iter_file():
+        with open(found_path, "rb") as f:
+            for chunk in iter(lambda: f.read(8192), b''):
+                yield chunk
+    
+    return StreamingResponse(
+        iter_file(),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="found_{job_id[:8]}.txt"'}
+    )
 
 @api_router.get("/jobs")
 async def list_jobs():
-    """List all jobs"""
     jobs_list = []
     for job in job_manager.jobs.values():
         progress = (job["processed"] / job["total"] * 100) if job["total"] > 0 else 0
@@ -2072,172 +937,16 @@ async def list_jobs():
             "total": job["total"],
             "processed": job["processed"],
             "progress": round(progress, 1),
+            "found": job["found"],
+            "not_found": job["not_found"],
             "filename": job["filename"],
             "created_at": job["created_at"],
         })
     return {"jobs": sorted(jobs_list, key=lambda x: x["created_at"], reverse=True)}
 
 
-# ============ VERIFICATION ROUTES ============
+# ============ APP SETUP ============
 
-@api_router.get("/platforms")
-async def list_platforms():
-    platforms_info = {"email": [], "phone": []}
-    
-    for name in CUSTOM_EMAIL_PLATFORMS.keys():
-        platforms_info["email"].append({
-            "name": name,
-            "category": CUSTOM_EMAIL_PLATFORMS[name]["category"],
-            "type": "custom"
-        })
-    
-    for name in HOLEHE_MODULES.keys():
-        platforms_info["email"].append({
-            "name": name,
-            "category": HOLEHE_MODULES[name]["category"],
-            "type": "holehe"
-        })
-    
-    for name in PHONE_PLATFORMS.keys():
-        platforms_info["phone"].append({
-            "name": name,
-            "category": PHONE_PLATFORMS[name]["category"]
-        })
-    
-    return {
-        "platforms": platforms_info, 
-        "email_total": len(platforms_info["email"]),
-        "phone_total": len(platforms_info["phone"])
-    }
-
-@api_router.post("/verify", response_model=BulkVerificationResponse)
-async def verify_identifiers_route(request: VerificationRequest):
-    if not request.identifiers:
-        raise HTTPException(status_code=400, detail="No identifiers provided")
-    
-    identifiers = request.identifiers  # No limit
-    platforms_filter = request.platforms  # Optional platform filter
-    
-    # Auto-thread: process multiple identifiers concurrently — scale with workload
-    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
-    sem = asyncio.Semaphore(concurrency)
-    
-    async def verify_with_semaphore(identifier):
-        async with sem:
-            return await verify_identifier(identifier, platforms_filter)
-    
-    tasks = [verify_with_semaphore(ident) for ident in identifiers]
-    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    results = []
-    for r in raw_results:
-        if isinstance(r, Exception):
-            logging.error(f"Verification error: {r}")
-            continue
-        if r is not None:
-            results.append(r)
-    
-    return BulkVerificationResponse(total=len(results), results=results)
-
-@api_router.post("/parse-file")
-async def parse_file(file: UploadFile = File(...)):
-    """Parse a file and return detected identifiers categorized by type (email/phone)"""
-    allowed_types = ['.csv', '.txt', '.text']
-    file_ext = Path(file.filename).suffix.lower() if file.filename else ''
-    
-    if file_ext not in allowed_types and file.content_type not in ['text/csv', 'text/plain']:
-        raise HTTPException(status_code=400, detail="Type de fichier invalide. Formats acceptés : CSV, TXT")
-    
-    try:
-        content = await file.read()
-        content_str = content.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            content_str = content.decode('latin-1')
-        except Exception:
-            raise HTTPException(status_code=400, detail="Impossible de décoder le contenu du fichier")
-    
-    identifiers = parse_file_content(content_str)
-    
-    if not identifiers:
-        raise HTTPException(status_code=400, detail="Aucun email ou numéro de téléphone valide trouvé")
-    
-    # Categorize identifiers
-    emails = []
-    phones = []
-    unknown = []
-    
-    for ident in identifiers:
-        id_type = detect_identifier_type(ident)
-        if id_type == "email":
-            emails.append(ident)
-        elif id_type == "phone":
-            phones.append(ident)
-        else:
-            unknown.append(ident)
-    
-    return {
-        "filename": file.filename,
-        "total": len(identifiers),
-        "emails": emails,
-        "phones": phones,
-        "unknown": unknown,
-        "email_count": len(emails),
-        "phone_count": len(phones),
-        "preview": {
-            "emails": emails[:10],
-            "phones": phones[:10],
-        }
-    }
-
-
-@api_router.post("/verify/file", response_model=BulkVerificationResponse)
-async def verify_file(file: UploadFile = File(...)):
-    allowed_types = ['.csv', '.txt', '.text']
-    file_ext = Path(file.filename).suffix.lower() if file.filename else ''
-    
-    if file_ext not in allowed_types and file.content_type not in ['text/csv', 'text/plain']:
-        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: CSV, TXT")
-    
-    try:
-        content = await file.read()
-        content_str = content.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            content_str = content.decode('latin-1')
-        except Exception:
-            raise HTTPException(status_code=400, detail="Could not decode file content")
-    
-    identifiers = parse_file_content(content_str)
-    
-    if not identifiers:
-        raise HTTPException(status_code=400, detail="No valid emails or phone numbers found")
-    
-    identifiers = identifiers  # No limit
-    
-    # Auto-thread: process multiple identifiers concurrently — scale with workload
-    concurrency = thread_config.dynamic_concurrent_identifiers(len(identifiers))
-    sem = asyncio.Semaphore(concurrency)
-    
-    async def verify_with_semaphore(identifier):
-        async with sem:
-            return await verify_identifier(identifier)
-    
-    tasks = [verify_with_semaphore(ident) for ident in identifiers]
-    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-    
-    results = []
-    for r in raw_results:
-        if isinstance(r, Exception):
-            logging.error(f"Verification error: {r}")
-            continue
-        if r is not None:
-            results.append(r)
-    
-    return BulkVerificationResponse(total=len(results), results=results)
-
-
-# Include router
 app.include_router(api_router)
 
 app.add_middleware(
@@ -2254,6 +963,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
+@app.on_event("startup")
+async def startup():
+    """Initialize browser on startup"""
+    try:
+        await browser_manager.initialize()
+        logger.info("Uber Eats Checker ready")
+    except Exception as e:
+        logger.error(f"Failed to start browser: {e}")
+
+
 @app.on_event("shutdown")
-async def shutdown_db_client():
+async def shutdown():
+    """Cleanup on shutdown"""
+    await browser_manager.shutdown()
     client.close()

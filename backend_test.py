@@ -1,340 +1,372 @@
 #!/usr/bin/env python3
 """
-Backend API Testing for Email Checker
-Tests the 7 platform email checker backend API
+Uber Eats Checker Backend API Test Suite
+Tests all API endpoints for the Uber Eats email checker service.
 """
 
 import asyncio
-import httpx
+import aiohttp
 import json
-import sys
-from typing import Dict, List, Any
+import time
+from typing import Dict, Any, List
 
 # Backend URL from frontend/.env
 BACKEND_URL = "https://test-runner-60.preview.emergentagent.com/api"
 
-# Expected platforms (exactly 7)
-EXPECTED_PLATFORMS = [
-    "netflix", "amazon", "coinbase", "binance", 
-    "spotify", "twitter", "disney_plus"
-]
-
-class BackendTester:
+class UberEatsAPITester:
     def __init__(self):
-        self.client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        self.session = None
         self.test_results = []
-        self.failed_tests = []
         
-    async def log_test(self, test_name: str, success: bool, details: str = ""):
+    async def __aenter__(self):
+        timeout = aiohttp.ClientTimeout(total=120)  # 2 minutes timeout
+        self.session = aiohttp.ClientSession(timeout=timeout)
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if self.session:
+            await self.session.close()
+    
+    def log_test(self, test_name: str, success: bool, details: str = "", response_data: Any = None):
         """Log test result"""
         result = {
             "test": test_name,
             "success": success,
-            "details": details
+            "details": details,
+            "response_data": response_data,
+            "timestamp": time.time()
         }
         self.test_results.append(result)
-        
         status = "✅ PASS" if success else "❌ FAIL"
-        print(f"{status}: {test_name}")
-        if details:
-            print(f"   Details: {details}")
-        if not success:
-            self.failed_tests.append(test_name)
-    
-    async def test_platforms_endpoint(self):
-        """Test GET /api/platforms - should return exactly 7 email and 7 phone platforms"""
-        try:
-            response = await self.client.get(f"{BACKEND_URL}/platforms")
-            
-            if response.status_code != 200:
-                await self.log_test("GET /api/platforms", False, f"Status code: {response.status_code}")
-                return
-            
-            data = response.json()
-            
-            # Check email platforms count
-            email_total = data.get("email_total", 0)
-            if email_total != 7:
-                await self.log_test("Email platforms count", False, f"Expected 7, got {email_total}")
-                return
-            
-            # Check phone platforms count
-            phone_total = data.get("phone_total", 0)
-            if phone_total != 7:
-                await self.log_test("Phone platforms count", False, f"Expected 7, got {phone_total}")
-                return
-            
-            # Extract platform names from the nested structure
-            email_platforms = [p["name"] for p in data.get("platforms", {}).get("email", [])]
-            phone_platforms = [p["name"] for p in data.get("platforms", {}).get("phone", [])]
-            
-            # Check exact platform names
-            email_set = set(email_platforms)
-            expected_set = set(EXPECTED_PLATFORMS)
-            
-            if email_set != expected_set:
-                missing = expected_set - email_set
-                extra = email_set - expected_set
-                await self.log_test("Email platforms content", False, f"Missing: {missing}, Extra: {extra}")
-                return
-            
-            # Check phone platforms match email platforms
-            phone_set = set(phone_platforms)
-            if phone_set != expected_set:
-                missing = expected_set - phone_set
-                extra = phone_set - expected_set
-                await self.log_test("Phone platforms content", False, f"Missing: {missing}, Extra: {extra}")
-                return
-            
-            await self.log_test("GET /api/platforms", True, f"Email: {email_platforms}, Phone: {phone_platforms}")
-            
-        except Exception as e:
-            await self.log_test("GET /api/platforms", False, f"Exception: {str(e)}")
+        print(f"{status} {test_name}: {details}")
+        if response_data and not success:
+            print(f"   Response: {response_data}")
     
     async def test_health_endpoint(self):
-        """Test GET /api/health - verify custom_platforms_need_proxy is empty and all platforms listed"""
+        """Test GET /api/health"""
         try:
-            response = await self.client.get(f"{BACKEND_URL}/health")
-            
-            if response.status_code != 200:
-                await self.log_test("GET /api/health", False, f"Status code: {response.status_code}")
-                return
-            
-            data = response.json()
-            
-            # Check custom_platforms_need_proxy is empty array
-            custom_proxy_needed = data.get("custom_platforms_need_proxy", None)
-            if custom_proxy_needed != []:
-                await self.log_test("custom_platforms_need_proxy", False, f"Expected [], got {custom_proxy_needed}")
-                return
-            
-            # Check proxies_count is 0 (no proxy required)
-            proxies_count = data.get("proxies_count", None)
-            if proxies_count != 0:
-                await self.log_test("proxies_count", False, f"Expected 0, got {proxies_count}")
-                return
-            
-            # Check email_platforms contains all 7
-            email_platforms = data.get("email_platforms", [])
-            if set(email_platforms) != set(EXPECTED_PLATFORMS):
-                await self.log_test("health email_platforms", False, f"Expected {EXPECTED_PLATFORMS}, got {email_platforms}")
-                return
-            
-            # Check phone_platforms contains all 7
-            phone_platforms = data.get("phone_platforms", [])
-            if set(phone_platforms) != set(EXPECTED_PLATFORMS):
-                await self.log_test("health phone_platforms", False, f"Expected {EXPECTED_PLATFORMS}, got {phone_platforms}")
-                return
-            
-            await self.log_test("GET /api/health", True, f"Proxy count: {proxies_count}, Custom proxy needed: {custom_proxy_needed}")
-            
+            async with self.session.get(f"{BACKEND_URL}/health") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check required fields
+                    if data.get("status") == "healthy" and "browser_ready" in data:
+                        browser_ready = data.get("browser_ready")
+                        self.log_test(
+                            "Health Check", 
+                            True, 
+                            f"Status: {data.get('status')}, Browser Ready: {browser_ready}",
+                            data
+                        )
+                        return True
+                    else:
+                        self.log_test(
+                            "Health Check", 
+                            False, 
+                            "Missing required fields or incorrect status",
+                            data
+                        )
+                        return False
+                else:
+                    self.log_test(
+                        "Health Check", 
+                        False, 
+                        f"HTTP {response.status}",
+                        await response.text()
+                    )
+                    return False
         except Exception as e:
-            await self.log_test("GET /api/health", False, f"Exception: {str(e)}")
+            self.log_test("Health Check", False, f"Exception: {str(e)}")
+            return False
     
-    async def test_email_verification(self):
-        """Test POST /api/verify with email for all 7 platforms"""
-        test_email = "test@example.com"
-        
+    async def test_root_endpoint(self):
+        """Test GET /api/"""
+        try:
+            async with self.session.get(f"{BACKEND_URL}/") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check for service info
+                    if "service" in data and "version" in data:
+                        self.log_test(
+                            "Root Endpoint", 
+                            True, 
+                            f"Service: {data.get('service')}, Version: {data.get('version')}",
+                            data
+                        )
+                        return True
+                    else:
+                        self.log_test(
+                            "Root Endpoint", 
+                            False, 
+                            "Missing service info fields",
+                            data
+                        )
+                        return False
+                else:
+                    self.log_test(
+                        "Root Endpoint", 
+                        False, 
+                        f"HTTP {response.status}",
+                        await response.text()
+                    )
+                    return False
+        except Exception as e:
+            self.log_test("Root Endpoint", False, f"Exception: {str(e)}")
+            return False
+    
+    async def test_proxy_add(self):
+        """Test POST /api/proxies/add"""
         try:
             payload = {
-                "identifiers": [test_email],
-                "platforms": EXPECTED_PLATFORMS
+                "proxies": ["http://123.45.67.89:8080"],
+                "proxy_type": "auto"
             }
             
-            response = await self.client.post(
-                f"{BACKEND_URL}/verify",
+            async with self.session.post(
+                f"{BACKEND_URL}/proxies/add",
                 json=payload,
                 headers={"Content-Type": "application/json"}
-            )
-            
-            if response.status_code != 200:
-                await self.log_test("POST /api/verify (email)", False, f"Status code: {response.status_code}, Response: {response.text}")
-                return
-            
-            data = response.json()
-            
-            # Check response structure
-            if "results" not in data or len(data["results"]) == 0:
-                await self.log_test("Email verification structure", False, "Missing 'results' in response or empty results")
-                return
-            
-            result = data["results"][0]
-            platforms_results = result.get("platforms", [])
-            
-            # Check all 7 platforms returned results
-            returned_platforms = [p.get("platform") for p in platforms_results]
-            if len(returned_platforms) != 7:
-                await self.log_test("Email verification platform count", False, f"Expected 7 platforms, got {len(returned_platforms)}: {returned_platforms}")
-                return
-            
-            # Check no platform crashed/errored
-            failed_platforms = []
-            for platform_result in platforms_results:
-                platform_name = platform_result.get("platform", "unknown")
-                
-                # Check required fields exist
-                if "status" not in platform_result:
-                    failed_platforms.append(f"{platform_name}: missing status")
-                elif "domain" not in platform_result:
-                    failed_platforms.append(f"{platform_name}: missing domain")
-                elif platform_result.get("status") == "error":
-                    failed_platforms.append(f"{platform_name}: error status")
-            
-            if failed_platforms:
-                await self.log_test("Email verification platform results", False, f"Failed platforms: {failed_platforms}")
-                return
-            
-            await self.log_test("POST /api/verify (email)", True, f"All 7 platforms responded successfully for {test_email}")
-            
+            ) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check response structure
+                    if "success" in data and "added" in data:
+                        self.log_test(
+                            "Add Proxy", 
+                            True, 
+                            f"Added: {data.get('added')}, Success: {data.get('success')}",
+                            data
+                        )
+                        return True
+                    else:
+                        self.log_test(
+                            "Add Proxy", 
+                            False, 
+                            "Missing required response fields",
+                            data
+                        )
+                        return False
+                else:
+                    self.log_test(
+                        "Add Proxy", 
+                        False, 
+                        f"HTTP {response.status}",
+                        await response.text()
+                    )
+                    return False
         except Exception as e:
-            await self.log_test("POST /api/verify (email)", False, f"Exception: {str(e)}")
+            self.log_test("Add Proxy", False, f"Exception: {str(e)}")
+            return False
     
-    async def test_phone_verification(self):
-        """Test POST /api/verify with phone for all 7 platforms"""
-        test_phone = "+33612345678"
-        
+    async def test_proxy_list(self):
+        """Test GET /api/proxies"""
+        try:
+            async with self.session.get(f"{BACKEND_URL}/proxies") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check response structure
+                    if "proxies" in data and "total" in data and "active" in data:
+                        self.log_test(
+                            "List Proxies", 
+                            True, 
+                            f"Total: {data.get('total')}, Active: {data.get('active')}",
+                            data
+                        )
+                        return True
+                    else:
+                        self.log_test(
+                            "List Proxies", 
+                            False, 
+                            "Missing required response fields",
+                            data
+                        )
+                        return False
+                else:
+                    self.log_test(
+                        "List Proxies", 
+                        False, 
+                        f"HTTP {response.status}",
+                        await response.text()
+                    )
+                    return False
+        except Exception as e:
+            self.log_test("List Proxies", False, f"Exception: {str(e)}")
+            return False
+    
+    async def test_proxy_clear(self):
+        """Test DELETE /api/proxies"""
+        try:
+            async with self.session.delete(f"{BACKEND_URL}/proxies") as response:
+                if response.status == 200:
+                    data = await response.json()
+                    
+                    # Check response structure
+                    if "success" in data and "message" in data:
+                        self.log_test(
+                            "Clear Proxies", 
+                            True, 
+                            f"Success: {data.get('success')}, Message: {data.get('message')}",
+                            data
+                        )
+                        return True
+                    else:
+                        self.log_test(
+                            "Clear Proxies", 
+                            False, 
+                            "Missing required response fields",
+                            data
+                        )
+                        return False
+                else:
+                    self.log_test(
+                        "Clear Proxies", 
+                        False, 
+                        f"HTTP {response.status}",
+                        await response.text()
+                    )
+                    return False
+        except Exception as e:
+            self.log_test("Clear Proxies", False, f"Exception: {str(e)}")
+            return False
+    
+    async def test_email_check(self):
+        """Test POST /api/check with 90s timeout"""
         try:
             payload = {
-                "identifiers": [test_phone],
-                "platforms": EXPECTED_PLATFORMS
+                "emails": ["testfake12345@gmail.com"]
             }
             
-            response = await self.client.post(
-                f"{BACKEND_URL}/verify",
-                json=payload,
-                headers={"Content-Type": "application/json"}
-            )
+            print("🔍 Starting email check (this may take up to 90 seconds)...")
+            start_time = time.time()
             
-            if response.status_code != 200:
-                await self.log_test("POST /api/verify (phone)", False, f"Status code: {response.status_code}, Response: {response.text}")
-                return
-            
-            data = response.json()
-            
-            # Check response structure
-            if "results" not in data or len(data["results"]) == 0:
-                await self.log_test("Phone verification structure", False, "Missing 'results' in response or empty results")
-                return
-            
-            result = data["results"][0]
-            platforms_results = result.get("platforms", [])
-            
-            # Check all 7 platforms returned results
-            returned_platforms = [p.get("platform") for p in platforms_results]
-            if len(returned_platforms) != 7:
-                await self.log_test("Phone verification platform count", False, f"Expected 7 platforms, got {len(returned_platforms)}: {returned_platforms}")
-                return
-            
-            # Check no platform crashed
-            crashed_platforms = []
-            for platform_result in platforms_results:
-                platform_name = platform_result.get("platform", "unknown")
-                
-                # Check for crash indicators
-                if platform_result.get("status") == "error":
-                    crashed_platforms.append(f"{platform_name}: error status")
-                elif "exception" in str(platform_result).lower():
-                    crashed_platforms.append(f"{platform_name}: exception detected")
-            
-            if crashed_platforms:
-                await self.log_test("Phone verification platform stability", False, f"Crashed platforms: {crashed_platforms}")
-                return
-            
-            await self.log_test("POST /api/verify (phone)", True, f"All 7 platforms responded for {test_phone}")
-            
+            # Use 90 second timeout for this specific request
+            timeout = aiohttp.ClientTimeout(total=90)
+            async with aiohttp.ClientSession(timeout=timeout) as check_session:
+                async with check_session.post(
+                    f"{BACKEND_URL}/check",
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                ) as response:
+                    elapsed = time.time() - start_time
+                    
+                    if response.status == 200:
+                        data = await response.json()
+                        
+                        # Check response structure
+                        required_fields = ["total", "results"]
+                        if all(field in data for field in required_fields):
+                            results = data.get("results", [])
+                            if results and len(results) > 0:
+                                result = results[0]
+                                required_result_fields = ["email", "status", "exists", "details", "platform"]
+                                
+                                if all(field in result for field in required_result_fields):
+                                    self.log_test(
+                                        "Email Check", 
+                                        True, 
+                                        f"Status: {result.get('status')}, Exists: {result.get('exists')}, Platform: {result.get('platform')}, Time: {elapsed:.1f}s",
+                                        data
+                                    )
+                                    return True
+                                else:
+                                    self.log_test(
+                                        "Email Check", 
+                                        False, 
+                                        f"Missing required result fields. Time: {elapsed:.1f}s",
+                                        data
+                                    )
+                                    return False
+                            else:
+                                self.log_test(
+                                    "Email Check", 
+                                    False, 
+                                    f"No results returned. Time: {elapsed:.1f}s",
+                                    data
+                                )
+                                return False
+                        else:
+                            self.log_test(
+                                "Email Check", 
+                                False, 
+                                f"Missing required response fields. Time: {elapsed:.1f}s",
+                                data
+                            )
+                            return False
+                    else:
+                        self.log_test(
+                            "Email Check", 
+                            False, 
+                            f"HTTP {response.status}, Time: {elapsed:.1f}s",
+                            await response.text()
+                        )
+                        return False
+        except asyncio.TimeoutError:
+            self.log_test("Email Check", False, "Request timed out after 90 seconds")
+            return False
         except Exception as e:
-            await self.log_test("POST /api/verify (phone)", False, f"Exception: {str(e)}")
-    
-    async def test_no_old_platforms(self):
-        """Verify that old platforms like uber_eats, deliveroo, etc. are not present"""
-        try:
-            response = await self.client.get(f"{BACKEND_URL}/platforms")
-            
-            if response.status_code != 200:
-                await self.log_test("Old platforms check", False, f"Could not get platforms list: {response.status_code}")
-                return
-            
-            data = response.json()
-            
-            # Extract platform names from the nested structure
-            email_platforms = [p["name"] for p in data.get("platforms", {}).get("email", [])]
-            phone_platforms = [p["name"] for p in data.get("platforms", {}).get("phone", [])]
-            all_platforms = email_platforms + phone_platforms
-            
-            # Old platforms that should NOT exist
-            old_platforms = [
-                "uber_eats", "deliveroo", "ebay", "discord", "instagram", 
-                "facebook", "linkedin", "github", "reddit", "tiktok"
-            ]
-            
-            found_old = []
-            for old_platform in old_platforms:
-                if old_platform in all_platforms:
-                    found_old.append(old_platform)
-            
-            if found_old:
-                await self.log_test("Old platforms removed", False, f"Found old platforms that should be removed: {found_old}")
-                return
-            
-            await self.log_test("Old platforms removed", True, "No old platforms found - cleanup successful")
-            
-        except Exception as e:
-            await self.log_test("Old platforms check", False, f"Exception: {str(e)}")
+            self.log_test("Email Check", False, f"Exception: {str(e)}")
+            return False
     
     async def run_all_tests(self):
-        """Run all backend tests"""
-        print("🚀 Starting Backend API Tests")
-        print(f"Backend URL: {BACKEND_URL}")
+        """Run all API tests in sequence"""
+        print("🚀 Starting Uber Eats Checker API Tests")
+        print(f"🔗 Backend URL: {BACKEND_URL}")
         print("=" * 60)
         
-        # Test 1: Platform list verification
-        await self.test_platforms_endpoint()
+        # Test sequence
+        tests = [
+            ("Health Check", self.test_health_endpoint),
+            ("Root Endpoint", self.test_root_endpoint),
+            ("Add Proxy", self.test_proxy_add),
+            ("List Proxies", self.test_proxy_list),
+            ("Clear Proxies", self.test_proxy_clear),
+            ("Email Check", self.test_email_check),
+        ]
         
-        # Test 2: Health check
-        await self.test_health_endpoint()
+        passed = 0
+        total = len(tests)
         
-        # Test 3: Email verification
-        await self.test_email_verification()
+        for test_name, test_func in tests:
+            try:
+                success = await test_func()
+                if success:
+                    passed += 1
+                # Small delay between tests
+                await asyncio.sleep(1)
+            except Exception as e:
+                self.log_test(test_name, False, f"Test execution failed: {str(e)}")
         
-        # Test 4: Phone verification  
-        await self.test_phone_verification()
-        
-        # Test 5: Verify old platforms removed
-        await self.test_no_old_platforms()
-        
-        # Summary
-        print("\n" + "=" * 60)
-        print("📊 TEST SUMMARY")
         print("=" * 60)
+        print(f"📊 Test Results: {passed}/{total} tests passed")
         
-        total_tests = len(self.test_results)
-        passed_tests = len([t for t in self.test_results if t["success"]])
-        failed_tests = len(self.failed_tests)
+        # Summary of failures
+        failures = [r for r in self.test_results if not r["success"]]
+        if failures:
+            print("\n❌ Failed Tests:")
+            for failure in failures:
+                print(f"   • {failure['test']}: {failure['details']}")
         
-        print(f"Total Tests: {total_tests}")
-        print(f"Passed: {passed_tests}")
-        print(f"Failed: {failed_tests}")
-        
-        if self.failed_tests:
-            print(f"\n❌ FAILED TESTS:")
-            for failed_test in self.failed_tests:
-                print(f"  - {failed_test}")
-        else:
-            print(f"\n✅ ALL TESTS PASSED!")
-        
-        await self.client.aclose()
-        
-        return failed_tests == 0
+        return passed, total, self.test_results
 
 async def main():
     """Main test runner"""
-    tester = BackendTester()
-    success = await tester.run_all_tests()
-    
-    if not success:
-        sys.exit(1)
-    
-    print("\n🎉 Backend API testing completed successfully!")
+    async with UberEatsAPITester() as tester:
+        passed, total, results = await tester.run_all_tests()
+        
+        # Write detailed results to file
+        with open("/app/test_results_detailed.json", "w") as f:
+            json.dump({
+                "summary": {"passed": passed, "total": total, "success_rate": passed/total},
+                "tests": results,
+                "backend_url": BACKEND_URL
+            }, f, indent=2)
+        
+        print(f"\n📝 Detailed results saved to /app/test_results_detailed.json")
+        return passed == total
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    success = asyncio.run(main())
+    exit(0 if success else 1)
